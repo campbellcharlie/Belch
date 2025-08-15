@@ -237,4 +237,4 @@ It must not be exposed to the public internet or used in a manner that violates 
 ## Support
 
 - Documentation: `http://localhost:7850/docs`
-- Issues: [GitHub Issues](https://github.com/campbellcharlie/belch/issues) 
+- Issues: [GitHub Issues](https://github.com/campbellcharlie/Belch/issues) 
