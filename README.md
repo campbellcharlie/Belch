@@ -229,7 +229,10 @@ MIT License - see [LICENSE](LICENSE) file for details.
 ## Disclaimer
 
 **Burp Suite is a trademark of PortSwigger Ltd.**  
-This project is an independent, third-party extension and is not affiliated with, endorsed by, or sponsored by PortSwigger Ltd.
+This project is an independent, third-party extension and is not affiliated with, endorsed by, or sponsored by PortSwigger Ltd.  
+
+This extension makes no claims of being secure and is intended for use only in controlled, local environments.  
+It must not be exposed to the public internet or used in a manner that violates PortSwigger's license terms.
 
 ## Support
 
