@@ -226,6 +226,11 @@ Belch requires Burp Suite Professional and must be used in compliance with PortS
 
 MIT License - see [LICENSE](LICENSE) file for details.
 
+## Disclaimer
+
+**Burp Suite is a trademark of PortSwigger Ltd.**  
+This project is an independent, third-party extension and is not affiliated with, endorsed by, or sponsored by PortSwigger Ltd.
+
 ## Support
 
 - Documentation: `http://localhost:7850/docs`
