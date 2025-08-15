@@ -234,6 +234,10 @@ This project is an independent, third-party extension and is not affiliated with
 This extension makes no claims of being secure and is intended for use only in controlled, local environments.  
 It must not be exposed to the public internet or used in a manner that violates PortSwigger's license terms.
 
+## Acknowledgments
+
+Special thanks to [Phil Thomas](https://github.com/fz42net) for the fantastic name "Belch" - it perfectly captures the essence of this Burp extension!
+
 ## Support
 
 - Documentation: `http://localhost:7850/docs`
