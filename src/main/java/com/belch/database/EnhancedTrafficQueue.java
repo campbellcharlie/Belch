@@ -95,7 +95,7 @@ public class EnhancedTrafficQueue {
     
     // Project change detection
     private volatile long lastProjectCheckTime = 0;
-    private static final long PROJECT_CHECK_INTERVAL_MS = 10000;
+    private static final long PROJECT_CHECK_INTERVAL_MS = 2000; // Check every 2 seconds for faster detection
     
     private final Lock queueLock = new ReentrantLock();
     
