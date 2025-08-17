@@ -149,6 +149,15 @@ public class RouteHandler {
             ));
             return false;
         }
+        
+        // Check for project changes and reinitialize if needed
+        try {
+            databaseService.checkForProjectChangeAndReinitialize();
+        } catch (Exception e) {
+            logger.warn("Failed to check for project changes: {}", e.getMessage());
+            // Don't fail the request, but log the issue
+        }
+        
         return true;
     }
     
@@ -860,8 +869,12 @@ public class RouteHandler {
             
             // Add current session tag as default filter if no session_tag parameter provided
             // Empty session_tag means search all sessions, handled by extractSearchParams
-            if (!searchParams.containsKey("session_tag") && ctx.queryParam("session_tag") == null) {
+            String explicitSessionTag = ctx.queryParam("session_tag");
+            if (!searchParams.containsKey("session_tag") && explicitSessionTag == null) {
                 searchParams.put("session_tag", config.getSessionTag());
+            } else if (explicitSessionTag != null && explicitSessionTag.isEmpty()) {
+                // Empty session_tag explicitly provided - search all sessions
+                searchParams.remove("session_tag");
             }
             
             // Get search results
@@ -1003,7 +1016,7 @@ public class RouteHandler {
             } else if (!sessionTag.isEmpty()) {
                 searchParams.put("session_tag", sessionTag);
             }
-            // If session_tag is explicitly empty string, don't filter by session
+            // If session_tag is explicitly empty string, don't filter by session - search all
             
             // Extract scope filtering parameters
             boolean isInScope = "true".equalsIgnoreCase(ctx.queryParam("isInScope"));

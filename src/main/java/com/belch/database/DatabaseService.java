@@ -938,6 +938,9 @@ public class DatabaseService {
      */
     public Connection getConnection() {
         try {
+            // Check for project changes first, before connection state
+            checkForProjectChangeAndReinitialize();
+            
             if (connection == null || connection.isClosed()) {
                 logger.warn("Database connection is closed, attempting to reconnect...");
                 if (!initialized.get()) {
@@ -950,6 +953,9 @@ public class DatabaseService {
             }
         } catch (SQLException e) {
             logger.error("Failed to check or restore database connection: {}", e.getMessage(), e);
+        } catch (Exception e) {
+            logger.warn("Failed to check for project changes in getConnection: {}", e.getMessage());
+            // Continue with existing connection logic
         }
         return connection;
     }
