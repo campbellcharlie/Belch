@@ -278,11 +278,24 @@ public class DatabaseService {
     public boolean checkForProjectChangeAndReinitialize() {
         try {
             String newProjectName = detectCurrentProject();
+            String newDatabasePath = generateProjectSpecificDatabasePath(newProjectName);
             
-            // Check if project has changed
-            if (!newProjectName.equals(currentProjectName)) {
-                logger.info("🔄 Project change detected: {} -> {}", currentProjectName, newProjectName);
-                logger.info("🔄 Reinitializing database for new project...");
+            // Check if project has changed OR database path has changed OR connection is invalid
+            boolean projectChanged = !newProjectName.equals(currentProjectName);
+            boolean databasePathChanged = !newDatabasePath.equals(currentDatabasePath);
+            boolean connectionInvalid = (connection == null || connection.isClosed());
+            
+            if (projectChanged || databasePathChanged || connectionInvalid) {
+                if (projectChanged) {
+                    logger.info("🔄 Project change detected: {} -> {}", currentProjectName, newProjectName);
+                }
+                if (databasePathChanged) {
+                    logger.info("🔄 Database path change detected: {} -> {}", currentDatabasePath, newDatabasePath);
+                }
+                if (connectionInvalid) {
+                    logger.info("🔄 Invalid database connection detected, reinitializing...");
+                }
+                logger.info("🔄 Reinitializing database...");
                 
                 // Close current connection
                 if (connection != null && !connection.isClosed()) {
