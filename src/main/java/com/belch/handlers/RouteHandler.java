@@ -867,15 +867,13 @@ public class RouteHandler {
             
             Map<String, String> searchParams = extractSearchParams(ctx);
             
-            // Add current session tag as default filter if no session_tag parameter provided
-            // Empty session_tag means search all sessions, handled by extractSearchParams
+            // Handle session_tag parameter - default to searching all sessions
             String explicitSessionTag = ctx.queryParam("session_tag");
-            if (!searchParams.containsKey("session_tag") && explicitSessionTag == null) {
-                searchParams.put("session_tag", config.getSessionTag());
-            } else if (explicitSessionTag != null && explicitSessionTag.isEmpty()) {
-                // Empty session_tag explicitly provided - search all sessions
-                searchParams.remove("session_tag");
+            if (explicitSessionTag != null && !explicitSessionTag.isEmpty()) {
+                // Specific session tag provided - use it
+                searchParams.put("session_tag", explicitSessionTag);
             }
+            // If no session_tag or empty session_tag - search all sessions (don't add filter)
             
             // Get search results
             List<Map<String, Object>> results = databaseService.searchTraffic(searchParams);
@@ -1008,15 +1006,13 @@ public class RouteHandler {
                 searchParams.put("offset", "0");
             }
             
-            // Add current session tag as default filter (unless explicitly specified)
+            // Handle session_tag parameter - default to searching all sessions
             String sessionTag = ctx.queryParam("session_tag");
-            if (sessionTag == null) {
-                // Default to current session to show recent activity
-                searchParams.put("session_tag", config.getSessionTag());
-            } else if (!sessionTag.isEmpty()) {
+            if (sessionTag != null && !sessionTag.isEmpty()) {
+                // Specific session tag provided - use it
                 searchParams.put("session_tag", sessionTag);
             }
-            // If session_tag is explicitly empty string, don't filter by session - search all
+            // If no session_tag or empty session_tag - search all sessions (don't add filter)
             
             // Extract scope filtering parameters
             boolean isInScope = "true".equalsIgnoreCase(ctx.queryParam("isInScope"));
