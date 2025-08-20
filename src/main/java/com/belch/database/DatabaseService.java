@@ -48,6 +48,7 @@ public class DatabaseService {
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     
     private Connection connection;
+    private ConnectionPool connectionPool;
     private String currentProjectName;
     private String currentDatabasePath;
     
@@ -119,9 +120,10 @@ public class DatabaseService {
                 logger.info("📁 Created database directory {}: {}", parentDir.getAbsolutePath(), created);
             }
             
-            logger.info("🔍 Step 4: Establishing database connection...");
-            connection = DriverManager.getConnection(dbUrl);
-            logger.info("✅ Database connection established successfully");
+            logger.info("🔍 Step 4: Establishing database connection pool...");
+            connectionPool = new ConnectionPool(dbUrl, 5, 2, 30000); // max=5, min=2, timeout=30s
+            connection = connectionPool.getConnection(); // Get one connection for schema operations
+            logger.info("✅ Database connection pool established successfully");
             
             // Test basic SQL functionality
             try {
@@ -308,7 +310,17 @@ public class DatabaseService {
                 }
                 logger.info("🔄 Reinitializing database...");
                 
-                // Close current connection safely
+                // Close current connection pool and connection safely
+                if (connectionPool != null) {
+                    try {
+                        connectionPool.shutdown();
+                        logger.info("📤 Shut down previous connection pool");
+                    } catch (Exception poolEx) {
+                        logger.debug("Error shutting down connection pool: {}", poolEx.getMessage());
+                    }
+                    connectionPool = null;
+                }
+                
                 try {
                     if (connection != null && !connection.isClosed()) {
                         connection.close();
@@ -317,6 +329,7 @@ public class DatabaseService {
                 } catch (SQLException closeEx) {
                     logger.debug("Error closing connection (expected if connection was dead): {}", closeEx.getMessage());
                 }
+                connection = null;
                 
                 // Reset initialization state
                 initialized.set(false);
@@ -1032,6 +1045,17 @@ public class DatabaseService {
         
         logger.info("Shutting down database service");
         
+        // Shutdown connection pool first
+        if (connectionPool != null) {
+            try {
+                connectionPool.shutdown();
+                logger.info("Database connection pool shut down");
+            } catch (Exception e) {
+                logger.error("Error shutting down connection pool", e);
+            }
+        }
+        
+        // Close single connection as fallback
         try {
             if (connection != null && !connection.isClosed()) {
                 connection.close();
@@ -1040,6 +1064,8 @@ public class DatabaseService {
         } catch (SQLException e) {
             logger.error("Error closing database connection", e);
         }
+        
+        initialized.set(false);
     }
     
     /**
@@ -1048,13 +1074,28 @@ public class DatabaseService {
      * @return true if initialized, false otherwise
      */
     public boolean isInitialized() {
-        // Check both initialization flag AND connection validity
+        // Check both initialization flag AND connection pool validity
         boolean flagInitialized = initialized.get();
         if (!flagInitialized) {
             return false;
         }
         
-        // Also check if connection is valid
+        // Check if connection pool is available and working
+        if (connectionPool != null) {
+            try {
+                // Test getting a connection from pool
+                Connection testConn = connectionPool.getConnection();
+                if (testConn != null && !testConn.isClosed()) {
+                    testConn.close(); // Return to pool
+                    return true;
+                }
+            } catch (SQLException e) {
+                logger.debug("Connection pool validity check failed: {}", e.getMessage());
+                return false;
+            }
+        }
+        
+        // Fallback to single connection check
         try {
             return connection != null && !connection.isClosed();
         } catch (SQLException e) {
