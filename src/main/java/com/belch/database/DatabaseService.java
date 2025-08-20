@@ -382,8 +382,8 @@ public class DatabaseService {
             stmt.execute("PRAGMA journal_mode=WAL");
             // Enable foreign key constraints
             stmt.execute("PRAGMA foreign_keys=ON");
-            // Set synchronous mode for better performance
-            stmt.execute("PRAGMA synchronous=NORMAL");
+            // Set synchronous mode - FULL for data integrity (prevents corruption)
+            stmt.execute("PRAGMA synchronous=FULL");
             // Set cache size (negative value means KB)
             stmt.execute("PRAGMA cache_size=-10000");
             
