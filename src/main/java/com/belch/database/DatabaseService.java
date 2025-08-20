@@ -288,7 +288,13 @@ public class DatabaseService {
             // Check if project has changed OR database path has changed OR connection is invalid
             boolean projectChanged = !newProjectName.equals(currentProjectName);
             boolean databasePathChanged = !newDatabasePath.equals(currentDatabasePath);
-            boolean connectionInvalid = (connection == null || connection.isClosed());
+            boolean connectionInvalid = false;
+            try {
+                connectionInvalid = (connection == null || connection.isClosed());
+            } catch (SQLException sqlEx) {
+                logger.warn("Error checking connection state, assuming invalid: {}", sqlEx.getMessage());
+                connectionInvalid = true;
+            }
             
             if (projectChanged || databasePathChanged || connectionInvalid) {
                 if (projectChanged) {
@@ -302,26 +308,38 @@ public class DatabaseService {
                 }
                 logger.info("🔄 Reinitializing database...");
                 
-                // Close current connection
-                if (connection != null && !connection.isClosed()) {
-                    connection.close();
-                    logger.info("📤 Closed previous project database connection");
+                // Close current connection safely
+                try {
+                    if (connection != null && !connection.isClosed()) {
+                        connection.close();
+                        logger.info("📤 Closed previous project database connection");
+                    }
+                } catch (SQLException closeEx) {
+                    logger.debug("Error closing connection (expected if connection was dead): {}", closeEx.getMessage());
                 }
                 
                 // Reset initialization state
                 initialized.set(false);
                 
-                // Reinitialize with new project
+                // Reinitialize with new project - CRITICAL: don't leave in failed state
                 try {
                     initialize();
                     logger.info("✅ Successfully switched to new project database");
+                    return true;
                 } catch (Exception e) {
-                    logger.error("❌ FAILED to reinitialize database after project change: {}", e.getMessage(), e);
-                    throw e;
+                    logger.error("❌ Failed to reinitialize database after project change", e);
+                    // CRITICAL: Retry initialization one more time with basic retry logic
+                    try {
+                        Thread.sleep(100); // Brief pause
+                        initialize();
+                        logger.info("✅ Database initialization succeeded on retry");
+                        return true;
+                    } catch (Exception retryEx) {
+                        logger.error("❌ Database initialization failed even on retry", retryEx);
+                        // Leave initialized as false so status reports disconnected
+                        return false;
+                    }
                 }
-                logger.info("📊 New Project: {} | Database: {}", currentProjectName, currentDatabasePath);
-                
-                return true;
             }
             
             return false;
@@ -1030,7 +1048,19 @@ public class DatabaseService {
      * @return true if initialized, false otherwise
      */
     public boolean isInitialized() {
-        return initialized.get();
+        // Check both initialization flag AND connection validity
+        boolean flagInitialized = initialized.get();
+        if (!flagInitialized) {
+            return false;
+        }
+        
+        // Also check if connection is valid
+        try {
+            return connection != null && !connection.isClosed();
+        } catch (SQLException e) {
+            logger.debug("Connection validity check failed, considering uninitialized: {}", e.getMessage());
+            return false;
+        }
     }
     
     /**
@@ -1041,24 +1071,24 @@ public class DatabaseService {
             // Check for project changes first, before connection state
             checkForProjectChangeAndReinitialize();
             
-            // Test connection validity with actual query, not just isClosed()
+            // Test connection validity - only do expensive test occasionally
             boolean needsReconnect = false;
             if (connection == null) {
                 needsReconnect = true;
                 logger.warn("Database connection is null, needs reconnection");
-            } else if (connection.isClosed()) {
-                needsReconnect = true;
-                logger.warn("Database connection is closed, needs reconnection");
             } else {
-                // Test with actual query to detect stale connections
-                try (Statement testStmt = connection.createStatement()) {
-                    testStmt.setQueryTimeout(1); // 1 second timeout
-                    testStmt.executeQuery("SELECT 1");
-                } catch (SQLException e) {
+                try {
+                    if (connection.isClosed()) {
+                        needsReconnect = true;
+                        logger.warn("Database connection is closed, needs reconnection");
+                    }
+                } catch (SQLException sqlEx) {
+                    logger.warn("Error checking if connection is closed, assuming it needs reconnection: {}", sqlEx.getMessage());
                     needsReconnect = true;
-                    logger.warn("Database connection is stale (test query failed): {}", e.getMessage());
                 }
             }
+            // Skip the expensive SELECT 1 test - rely on isClosed() check which is much lighter
+            // The SELECT 1 test was causing false positives and unnecessary reconnections
             
             if (needsReconnect) {
                 logger.info("🔄 Reconnecting to database...");
@@ -1071,22 +1101,34 @@ public class DatabaseService {
                     logger.debug("Error closing old connection: {}", e.getMessage());
                 }
                 
-                // Reinitialize
+                // Reinitialize - CRITICAL: make sure we succeed
                 initialized.set(false);
-                initialize();
-                logger.info("✅ Database reconnection successful");
-            }
-        } catch (SQLException e) {
-            logger.error("Failed to check or restore database connection: {}", e.getMessage(), e);
-            // Try one more time to reinitialize
-            try {
-                initialized.set(false);
-                initialize();
-            } catch (Exception reinitEx) {
-                logger.error("Failed to reinitialize database after error: {}", reinitEx.getMessage());
+                try {
+                    initialize();
+                    logger.info("✅ Database reconnection successful");
+                } catch (Exception initEx) {
+                    logger.error("Failed to initialize database: {}", initEx.getMessage());
+                    // Try one more time with a brief delay
+                    try {
+                        Thread.sleep(50);
+                        initialize();
+                        logger.info("✅ Database initialization succeeded on retry");
+                    } catch (Exception retryEx) {
+                        logger.error("Database initialization failed completely: {}", retryEx.getMessage());
+                        // Connection will remain null, initialized will be false
+                    }
+                }
             }
         } catch (Exception e) {
-            logger.warn("Failed to check for project changes in getConnection: {}", e.getMessage());
+            logger.error("Unexpected error in getConnection: {}", e.getMessage(), e);
+            // Last resort: try to reinitialize if we're not initialized
+            if (!initialized.get()) {
+                try {
+                    initialize();
+                } catch (Exception lastResortEx) {
+                    logger.error("Last resort database initialization failed: {}", lastResortEx.getMessage());
+                }
+            }
         }
         return connection;
     }
