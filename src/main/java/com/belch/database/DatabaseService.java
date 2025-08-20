@@ -120,10 +120,9 @@ public class DatabaseService {
                 logger.info("📁 Created database directory {}: {}", parentDir.getAbsolutePath(), created);
             }
             
-            logger.info("🔍 Step 4: Establishing database connection pool...");
-            connectionPool = new ConnectionPool(dbUrl, 5, 2, 30000); // max=5, min=2, timeout=30s
-            connection = connectionPool.getConnection(); // Get one connection for schema operations
-            logger.info("✅ Database connection pool established successfully");
+            logger.info("🔍 Step 4: Establishing database connection...");
+            connection = DriverManager.getConnection(dbUrl);
+            logger.info("✅ Database connection established successfully");
             
             // Test basic SQL functionality
             try {
@@ -154,6 +153,16 @@ public class DatabaseService {
             
             // Create database indexes for better query performance
             createIndexes();
+            
+            // Initialize connection pool AFTER schema operations are complete
+            logger.info("🔍 Step 9: Initializing connection pool for runtime operations...");
+            try {
+                connectionPool = new ConnectionPool(dbUrl, 5, 2, 30000); // max=5, min=2, timeout=30s
+                logger.info("✅ Connection pool initialized successfully");
+            } catch (Exception poolEx) {
+                logger.warn("Connection pool initialization failed, will use single connection: {}", poolEx.getMessage());
+                connectionPool = null;
+            }
             
             logger.info("🎉 Database service initialized successfully with project-specific database");
             logger.info("📊 Project: {} | Database: {}", projectName, currentDatabasePath);
