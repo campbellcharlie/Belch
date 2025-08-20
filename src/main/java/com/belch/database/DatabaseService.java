@@ -108,7 +108,7 @@ public class DatabaseService {
                 logger.warn("⚠️ DriverManager test failed, will try direct connection: {}", e.getMessage());
             }
             
-            // Create database connection with enhanced error reporting
+            // Create database connection with corruption detection and recovery
             String dbUrl = "jdbc:sqlite:" + currentDatabasePath;
             logger.info("🔍 Step 3: Creating database connection to: {}", dbUrl);
             
@@ -118,6 +118,30 @@ public class DatabaseService {
             if (parentDir != null && !parentDir.exists()) {
                 boolean created = parentDir.mkdirs();
                 logger.info("📁 Created database directory {}: {}", parentDir.getAbsolutePath(), created);
+            }
+            
+            // Check for database corruption BEFORE attempting connection
+            if (dbFile.exists()) {
+                logger.info("🔍 Step 3a: Checking existing database integrity...");
+                try {
+                    Connection testConn = DriverManager.getConnection(dbUrl);
+                    try (Statement testStmt = testConn.createStatement()) {
+                        testStmt.executeQuery("PRAGMA integrity_check(1)").close();
+                        logger.info("✅ Database integrity check passed");
+                    }
+                    testConn.close();
+                } catch (SQLException corruptEx) {
+                    if (corruptEx.getMessage().contains("SQLITE_CORRUPT") || corruptEx.getMessage().contains("malformed")) {
+                        logger.error("🚨 DATABASE CORRUPTION DETECTED: {}", corruptEx.getMessage());
+                        logger.info("🔧 Auto-recovering: Deleting corrupted database file...");
+                        boolean deleted = dbFile.delete();
+                        new java.io.File(currentDatabasePath + "-wal").delete();
+                        new java.io.File(currentDatabasePath + "-shm").delete();
+                        logger.info("🔧 Corrupted database deleted: {}", deleted);
+                    } else {
+                        throw corruptEx;
+                    }
+                }
             }
             
             logger.info("🔍 Step 4: Establishing database connection...");
@@ -400,22 +424,38 @@ public class DatabaseService {
             connection.setAutoCommit(true);
             logger.info("Database autocommit enabled: {}", connection.getAutoCommit());
             
-            // Enable WAL mode for better concurrent access
-            stmt.execute("PRAGMA journal_mode=WAL");
-            // Enable foreign key constraints
-            stmt.execute("PRAGMA foreign_keys=ON");
-            // Set synchronous mode - FULL for data integrity (prevents corruption)
-            stmt.execute("PRAGMA synchronous=FULL");
-            // Set cache size (negative value means KB)
-            stmt.execute("PRAGMA cache_size=-10000");
-            
-            // IMPORTANT: Add busy timeout to handle concurrent access and prevent "database is locked" errors
-            stmt.execute("PRAGMA busy_timeout=10000");  // Wait up to 10 seconds if database is locked
-            
-            // Ensure temp store is in memory for performance
-            stmt.execute("PRAGMA temp_store=MEMORY");
-            
-            logger.info("SQLite connection configured successfully with busy timeout for resilience");
+            // Configure PRAGMA settings safely with error handling
+            try {
+                // Set busy timeout FIRST to handle locking issues
+                stmt.execute("PRAGMA busy_timeout=30000");  // Increased to 30 seconds
+                logger.info("✅ Busy timeout set to 30 seconds");
+                
+                // Set synchronous mode for data integrity BEFORE WAL mode
+                stmt.execute("PRAGMA synchronous=FULL");
+                logger.info("✅ Synchronous mode set to FULL");
+                
+                // Enable WAL mode (this is the most likely to cause corruption if file is already damaged)
+                stmt.execute("PRAGMA journal_mode=WAL");
+                logger.info("✅ WAL mode enabled");
+                
+                // Enable foreign key constraints
+                stmt.execute("PRAGMA foreign_keys=ON");
+                logger.info("✅ Foreign keys enabled");
+                
+                // Set cache size (negative value means KB)
+                stmt.execute("PRAGMA cache_size=-10000");
+                logger.info("✅ Cache size set");
+                
+                // Ensure temp store is in memory for performance
+                stmt.execute("PRAGMA temp_store=MEMORY");
+                logger.info("✅ Temp store set to memory");
+                
+                logger.info("SQLite connection configured successfully with enhanced safety");
+                
+            } catch (SQLException pragmaEx) {
+                logger.error("Failed to configure PRAGMA settings: {}", pragmaEx.getMessage());
+                throw pragmaEx;
+            }
         }
     }
     
