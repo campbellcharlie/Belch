@@ -557,7 +557,7 @@ public class EnhancedTrafficQueue {
                     long result = databaseService.storeTrafficNormalized(
                         item.method, item.url, item.host, item.headers, item.body,
                         item.responseHeaders, item.responseBody, item.statusCode, 
-                        item.sessionTag, item.source
+                        item.sessionTag, item.source, item.requestHttpVersion, item.responseHttpVersion
                     );
                     
                     if (result > 0) {

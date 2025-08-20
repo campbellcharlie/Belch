@@ -145,6 +145,11 @@ public class DatabaseService {
             schemaManager.initializeSchema(connection);
             logger.info("✅ Schema initialization completed");
             
+            // Migrate schema to add missing columns (timing data)
+            logger.info("🔍 Step 8: Migrating database schema for compatibility...");
+            migrateSchemaIfNeeded();
+            logger.info("✅ Schema migration completed");
+            
             // Create database indexes for better query performance
             createIndexes();
             
@@ -349,7 +354,8 @@ public class DatabaseService {
      * Configures the SQLite connection with optimal settings.
      */
     private void configureConnection() throws SQLException {
-        try (Statement stmt = getConnection().createStatement()) {
+        // Use connection directly here, not getConnection() to avoid recursion
+        try (Statement stmt = connection.createStatement()) {
             // CRITICAL: Ensure autocommit is enabled for SQLite
             connection.setAutoCommit(true);
             logger.info("Database autocommit enabled: {}", connection.getAutoCommit());
@@ -363,7 +369,55 @@ public class DatabaseService {
             // Set cache size (negative value means KB)
             stmt.execute("PRAGMA cache_size=-10000");
             
-            logger.info("SQLite connection configured successfully");
+            // IMPORTANT: Add busy timeout to handle concurrent access and prevent "database is locked" errors
+            stmt.execute("PRAGMA busy_timeout=10000");  // Wait up to 10 seconds if database is locked
+            
+            // Ensure temp store is in memory for performance
+            stmt.execute("PRAGMA temp_store=MEMORY");
+            
+            logger.info("SQLite connection configured successfully with busy timeout for resilience");
+        }
+    }
+    
+    /**
+     * Migrates database schema to add missing timing columns.
+     */
+    private void migrateSchemaIfNeeded() throws SQLException {
+        logger.info("Checking and migrating database schema if needed...");
+        
+        try (Statement stmt = connection.createStatement()) {
+            // Check if timing columns exist
+            try {
+                stmt.executeQuery("SELECT request_http_version FROM proxy_traffic LIMIT 1").close();
+                logger.info("Database schema is up to date");
+                return;
+            } catch (SQLException e) {
+                logger.info("Missing timing columns detected, adding them...");
+            }
+            
+            // Add missing timing and HTTP version columns
+            String[] newColumns = {
+                "ALTER TABLE proxy_traffic ADD COLUMN request_http_version VARCHAR(10) DEFAULT NULL",
+                "ALTER TABLE proxy_traffic ADD COLUMN response_http_version VARCHAR(10) DEFAULT NULL",
+                "ALTER TABLE proxy_traffic ADD COLUMN dns_resolution_time INTEGER DEFAULT NULL",
+                "ALTER TABLE proxy_traffic ADD COLUMN connection_time INTEGER DEFAULT NULL", 
+                "ALTER TABLE proxy_traffic ADD COLUMN tls_negotiation_time INTEGER DEFAULT NULL",
+                "ALTER TABLE proxy_traffic ADD COLUMN request_time INTEGER DEFAULT NULL",
+                "ALTER TABLE proxy_traffic ADD COLUMN response_time INTEGER DEFAULT NULL",
+                "ALTER TABLE proxy_traffic ADD COLUMN total_time INTEGER DEFAULT NULL"
+            };
+            
+            for (String alterSql : newColumns) {
+                try {
+                    stmt.execute(alterSql);
+                    logger.info("Added column: {}", alterSql.substring(alterSql.indexOf("ADD COLUMN") + 11, alterSql.indexOf(" ", alterSql.indexOf("ADD COLUMN") + 11)));
+                } catch (SQLException e) {
+                    // Column might already exist, continue
+                    logger.debug("Column already exists or error adding: {}", e.getMessage());
+                }
+            }
+            
+            logger.info("✅ Database schema migration completed successfully");
         }
     }
     
@@ -409,8 +463,8 @@ public class DatabaseService {
         }
         
         String sql = "INSERT INTO proxy_traffic (" +
-                    "timestamp, method, url, host, headers, body, session_tag" +
-                    ") VALUES (?, ?, ?, ?, ?, ?, ?)";
+                    "timestamp, method, url, host, headers, body, session_tag, request_http_version" +
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
         
         try (PreparedStatement stmt = getConnection().prepareStatement(sql)) {
             stmt.setTimestamp(1, Timestamp.valueOf(LocalDateTime.now()));
@@ -420,6 +474,7 @@ public class DatabaseService {
             stmt.setString(5, sanitizeString(request.headers().toString(), 65536));
             stmt.setString(6, sanitizeString(request.bodyToString(), 65536));
             stmt.setString(7, sanitizeString(config.getSessionTag(), 100));
+            stmt.setString(8, sanitizeString(request.httpVersion(), 10));
             
             stmt.executeUpdate();
             
@@ -448,7 +503,7 @@ public class DatabaseService {
         
         // Strategy 1: Try exact URL + method match within recent time window (last 60 seconds)
         String exactMatchSql = "UPDATE proxy_traffic " +
-                              "SET status_code = ?, response_headers = ?, response_body = ? " +
+                              "SET status_code = ?, response_headers = ?, response_body = ?, response_http_version = ? " +
                               "WHERE url = ? AND method = ? AND status_code IS NULL " +
                               "AND timestamp > datetime('now', '-60 seconds') " +
                               "ORDER BY timestamp DESC LIMIT 1";
@@ -457,8 +512,9 @@ public class DatabaseService {
             stmt.setInt(1, response.statusCode());
             stmt.setString(2, sanitizeString(response.headers().toString(), 65536));
             stmt.setString(3, sanitizeString(response.bodyToString(), 65536));
-            stmt.setString(4, sanitizeString(requestUrl, 8192));
-            stmt.setString(5, sanitizeString(requestMethod, 10));
+            stmt.setString(4, sanitizeString(response.httpVersion(), 10));
+            stmt.setString(5, sanitizeString(requestUrl, 8192));
+            stmt.setString(6, sanitizeString(requestMethod, 10));
             
             int updated = stmt.executeUpdate();
             
@@ -474,7 +530,7 @@ public class DatabaseService {
         // Strategy 2: Try fuzzy URL match (without query params) + method within time window
         String baseUrl = requestUrl.split("\\?")[0]; // Remove query parameters
         String fuzzyMatchSql = "UPDATE proxy_traffic " +
-                              "SET status_code = ?, response_headers = ?, response_body = ? " +
+                              "SET status_code = ?, response_headers = ?, response_body = ?, response_http_version = ? " +
                               "WHERE url LIKE ? AND method = ? AND status_code IS NULL " +
                               "AND timestamp > datetime('now', '-60 seconds') " +
                               "ORDER BY timestamp DESC LIMIT 1";
@@ -483,8 +539,9 @@ public class DatabaseService {
             stmt.setInt(1, response.statusCode());
             stmt.setString(2, sanitizeString(response.headers().toString(), 65536));
             stmt.setString(3, sanitizeString(response.bodyToString(), 65536));
-            stmt.setString(4, sanitizeString(baseUrl, 8192) + "%");
-            stmt.setString(5, sanitizeString(requestMethod, 10));
+            stmt.setString(4, sanitizeString(response.httpVersion(), 10));
+            stmt.setString(5, sanitizeString(baseUrl, 8192) + "%");
+            stmt.setString(6, sanitizeString(requestMethod, 10));
             
             int updated = stmt.executeUpdate();
             
@@ -499,7 +556,7 @@ public class DatabaseService {
         
         // Strategy 3: Fallback to most recent unmatched request within time window
         String fallbackSql = "UPDATE proxy_traffic " +
-                            "SET status_code = ?, response_headers = ?, response_body = ? " +
+                            "SET status_code = ?, response_headers = ?, response_body = ?, response_http_version = ? " +
                             "WHERE status_code IS NULL " +
                             "AND timestamp > datetime('now', '-120 seconds') " +
                             "ORDER BY timestamp DESC LIMIT 1";
@@ -508,6 +565,7 @@ public class DatabaseService {
             stmt.setInt(1, response.statusCode());
             stmt.setString(2, sanitizeString(response.headers().toString(), 65536));
             stmt.setString(3, sanitizeString(response.bodyToString(), 65536));
+            stmt.setString(4, sanitizeString(response.httpVersion(), 10));
             
             int updated = stmt.executeUpdate();
             
@@ -588,11 +646,19 @@ public class DatabaseService {
      * @return List of traffic records
      */
     public List<Map<String, Object>> searchTraffic(Map<String, String> searchParams) {
-        if (shutdown.get() || connection == null) {
+        if (shutdown.get()) {
+            logger.warn("Database service is shut down, returning empty results");
             return new ArrayList<>();
         }
         
-        StringBuilder sql = new StringBuilder("SELECT * FROM proxy_traffic WHERE 1=1");
+        // Use getConnection() instead of direct connection check to ensure reconnection
+        Connection conn = getConnection();
+        if (conn == null) {
+            logger.error("Database connection is null after getConnection(), returning empty results");
+            return new ArrayList<>();
+        }
+        
+        StringBuilder sql = new StringBuilder("SELECT id, timestamp, method, url, host, status_code, headers, body, response_headers, response_body, session_tag, content_hash, traffic_source, request_http_version, response_http_version, dns_resolution_time, connection_time, tls_negotiation_time, request_time, response_time, total_time FROM proxy_traffic WHERE 1=1");
         List<Object> params = new ArrayList<>();
         
         // Determine case sensitivity
@@ -632,10 +698,8 @@ public class DatabaseService {
             params.add(searchParams.get("method"));
         }
         
-        if (searchParams.containsKey("host")) {
-            sql.append(hostLikeOperator);
-            params.add("%" + searchParams.get("host") + "%");
-        }
+        // Handle host filtering (single or multiple)
+        addHostFiltering(sql, params, searchParams, caseInsensitive);
         
         if (searchParams.containsKey("status_code")) {
             sql.append(" AND status_code = ?");
@@ -661,6 +725,9 @@ public class DatabaseService {
             sql.append(" AND timestamp <= ?");
             params.add(parseTimestamp(searchParams.get("end_time")));
         }
+        
+        // Add incremental update support with "since" parameter
+        addTimestampFiltering(sql, params, searchParams);
         
         // Add ordering - support sort and order parameters
         String sortColumn = searchParams.getOrDefault("sort", "timestamp");
@@ -727,12 +794,12 @@ public class DatabaseService {
         logger.info("DEBUG searchTraffic: Executing SQL: {}", sql.toString());
         logger.info("DEBUG searchTraffic: Parameters: {}", params);
         try {
-            logger.info("DEBUG searchTraffic: Connection valid: {}", connection != null && !connection.isClosed());
+            logger.info("DEBUG searchTraffic: Connection valid: {}", conn != null && !conn.isClosed());
         } catch (SQLException e) {
             logger.warn("Could not check connection status: {}", e.getMessage());
         }
         
-        try (PreparedStatement stmt = getConnection().prepareStatement(sql.toString())) {
+        try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
             // Set parameters
             for (int i = 0; i < params.size(); i++) {
                 stmt.setObject(i + 1, params.get(i));
@@ -766,6 +833,19 @@ public class DatabaseService {
                     record.put("response_headers", rs.getString("response_headers"));
                     record.put("response_body", rs.getString("response_body"));
                     record.put("session_tag", rs.getString("session_tag"));
+                    record.put("content_hash", rs.getString("content_hash"));
+                    record.put("traffic_source", rs.getString("traffic_source"));
+                    record.put("request_http_version", rs.getString("request_http_version"));
+                    record.put("response_http_version", rs.getString("response_http_version"));
+                    
+                    // Add timing data
+                    record.put("dns_resolution_time", rs.getObject("dns_resolution_time"));
+                    record.put("connection_time", rs.getObject("connection_time"));
+                    record.put("tls_negotiation_time", rs.getObject("tls_negotiation_time"));
+                    record.put("request_time", rs.getObject("request_time"));
+                    record.put("response_time", rs.getObject("response_time"));
+                    record.put("total_time", rs.getObject("total_time"));
+                    
                     results.add(record);
                 }
             }
@@ -799,7 +879,13 @@ public class DatabaseService {
      * @return Total count of matching records
      */
     public long getSearchCount(Map<String, String> searchParams) {
-        if (shutdown.get() || connection == null) {
+        if (shutdown.get()) {
+            return 0;
+        }
+        
+        Connection conn = getConnection();
+        if (conn == null) {
+            logger.error("Database connection is null in getSearchCount, returning 0");
             return 0;
         }
         
@@ -843,10 +929,8 @@ public class DatabaseService {
             params.add(searchParams.get("method"));
         }
         
-        if (searchParams.containsKey("host")) {
-            sql.append(hostLikeOperator);
-            params.add("%" + searchParams.get("host") + "%");
-        }
+        // Handle host filtering (single or multiple)
+        addHostFiltering(sql, params, searchParams, caseInsensitive);
         
         if (searchParams.containsKey("status_code")) {
             sql.append(" AND status_code = ?");
@@ -873,7 +957,10 @@ public class DatabaseService {
             params.add(parseTimestamp(searchParams.get("end_time")));
         }
         
-        try (PreparedStatement stmt = getConnection().prepareStatement(sql.toString())) {
+        // Add incremental update support with "since" parameter
+        addTimestampFiltering(sql, params, searchParams);
+        
+        try (PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
             // Set parameters
             for (int i = 0; i < params.size(); i++) {
                 stmt.setObject(i + 1, params.get(i));
@@ -949,26 +1036,57 @@ public class DatabaseService {
     /**
      * Returns connection for external use, reconnecting if necessary.
      */
-    public Connection getConnection() {
+    public synchronized Connection getConnection() {
         try {
             // Check for project changes first, before connection state
             checkForProjectChangeAndReinitialize();
             
-            if (connection == null || connection.isClosed()) {
-                logger.warn("Database connection is closed, attempting to reconnect...");
-                if (!initialized.get()) {
-                    initialize();
-                } else {
-                    // Reinitialize if connection is closed
-                    initialized.set(false);
-                    initialize();
+            // Test connection validity with actual query, not just isClosed()
+            boolean needsReconnect = false;
+            if (connection == null) {
+                needsReconnect = true;
+                logger.warn("Database connection is null, needs reconnection");
+            } else if (connection.isClosed()) {
+                needsReconnect = true;
+                logger.warn("Database connection is closed, needs reconnection");
+            } else {
+                // Test with actual query to detect stale connections
+                try (Statement testStmt = connection.createStatement()) {
+                    testStmt.setQueryTimeout(1); // 1 second timeout
+                    testStmt.executeQuery("SELECT 1");
+                } catch (SQLException e) {
+                    needsReconnect = true;
+                    logger.warn("Database connection is stale (test query failed): {}", e.getMessage());
                 }
+            }
+            
+            if (needsReconnect) {
+                logger.info("🔄 Reconnecting to database...");
+                // Close existing connection if it exists
+                try {
+                    if (connection != null && !connection.isClosed()) {
+                        connection.close();
+                    }
+                } catch (SQLException e) {
+                    logger.debug("Error closing old connection: {}", e.getMessage());
+                }
+                
+                // Reinitialize
+                initialized.set(false);
+                initialize();
+                logger.info("✅ Database reconnection successful");
             }
         } catch (SQLException e) {
             logger.error("Failed to check or restore database connection: {}", e.getMessage(), e);
+            // Try one more time to reinitialize
+            try {
+                initialized.set(false);
+                initialize();
+            } catch (Exception reinitEx) {
+                logger.error("Failed to reinitialize database after error: {}", reinitEx.getMessage());
+            }
         } catch (Exception e) {
             logger.warn("Failed to check for project changes in getConnection: {}", e.getMessage());
-            // Continue with existing connection logic
         }
         return connection;
     }
@@ -1402,7 +1520,7 @@ public class DatabaseService {
     public long storeRawTrafficWithSource(String method, String url, String host, 
                                         String headers, String body, String responseHeaders, 
                                         String responseBody, Integer statusCode, String sessionTag,
-                                        TrafficSource source) {
+                                        TrafficSource source, String requestHttpVersion, String responseHttpVersion) {
         if (shutdown.get() || connection == null) {
             return -1;
         }
@@ -1417,8 +1535,8 @@ public class DatabaseService {
         }
         
         String sql = "INSERT INTO proxy_traffic (" +
-                    "timestamp, method, url, host, headers, body, response_headers, response_body, status_code, session_tag, content_hash, traffic_source" +
-                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                    "timestamp, method, url, host, headers, body, response_headers, response_body, status_code, session_tag, content_hash, traffic_source, request_http_version, response_http_version" +
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         try (PreparedStatement stmt = getConnection().prepareStatement(sql)) {
             stmt.setTimestamp(1, Timestamp.valueOf(LocalDateTime.now()));
@@ -1433,6 +1551,8 @@ public class DatabaseService {
             stmt.setString(10, sanitizeString(sessionTag, 100));
             stmt.setString(11, contentHash);
             stmt.setString(12, source.getValue());
+            stmt.setString(13, sanitizeString(requestHttpVersion, 10));
+            stmt.setString(14, sanitizeString(responseHttpVersion, 10));
             
             int rowsAffected = stmt.executeUpdate();
             
@@ -1463,6 +1583,104 @@ public class DatabaseService {
     }
     
     /**
+     * Overloaded method for backward compatibility - without HTTP version parameters
+     */
+    public long storeRawTrafficWithSource(String method, String url, String host, 
+                                        String headers, String body, String responseHeaders, 
+                                        String responseBody, Integer statusCode, String sessionTag,
+                                        TrafficSource source) {
+        return storeRawTrafficWithSource(method, url, host, headers, body, responseHeaders,
+                responseBody, statusCode, sessionTag, source, null, null);
+    }
+    
+    /**
+     * Enhanced method with timing data support
+     */
+    public long storeRawTrafficWithSource(String method, String url, String host, 
+                                        String headers, String body, String responseHeaders, 
+                                        String responseBody, Integer statusCode, String sessionTag,
+                                        TrafficSource source, String requestHttpVersion, String responseHttpVersion,
+                                        com.belch.models.TimingData timingData) {
+        if (shutdown.get() || connection == null) {
+            return -1;
+        }
+        
+        // Generate content hash for deduplication
+        String contentHash = generateContentHash(method, url, headers, body, responseHeaders, responseBody);
+        
+        // Check for duplicates
+        if (isDuplicateRecord(method, url, host, contentHash)) {
+            logger.debug("Skipping duplicate record: {} {} (Source: {})", method, url, source);
+            return -2; // Indicate duplicate was skipped
+        }
+        
+        String sql = "INSERT INTO proxy_traffic (" +
+                    "timestamp, method, url, host, headers, body, response_headers, response_body, status_code, session_tag, content_hash, traffic_source, request_http_version, response_http_version, " +
+                    "dns_resolution_time, connection_time, tls_negotiation_time, request_time, response_time, total_time" +
+                    ") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        
+        try (PreparedStatement stmt = getConnection().prepareStatement(sql)) {
+            stmt.setTimestamp(1, Timestamp.valueOf(LocalDateTime.now()));
+            stmt.setString(2, sanitizeString(method, 10));
+            stmt.setString(3, sanitizeString(url, 8192));
+            stmt.setString(4, sanitizeString(host, 255));
+            stmt.setString(5, sanitizeString(headers, 65536));
+            stmt.setString(6, sanitizeString(body, 65536));
+            stmt.setString(7, sanitizeString(responseHeaders, 65536));
+            stmt.setString(8, sanitizeString(responseBody, 65536));
+            stmt.setObject(9, statusCode);
+            stmt.setString(10, sanitizeString(sessionTag, 100));
+            stmt.setString(11, contentHash);
+            stmt.setString(12, source.getValue());
+            stmt.setString(13, sanitizeString(requestHttpVersion, 10));
+            stmt.setString(14, sanitizeString(responseHttpVersion, 10));
+            
+            // Set timing data
+            if (timingData != null) {
+                stmt.setObject(15, timingData.getDnsResolutionTime());
+                stmt.setObject(16, timingData.getConnectionTime());
+                stmt.setObject(17, timingData.getTlsNegotiationTime());
+                stmt.setObject(18, timingData.getRequestTime());
+                stmt.setObject(19, timingData.getResponseTime());
+                stmt.setObject(20, timingData.getTotalTime());
+            } else {
+                stmt.setNull(15, java.sql.Types.INTEGER);
+                stmt.setNull(16, java.sql.Types.INTEGER);
+                stmt.setNull(17, java.sql.Types.INTEGER);
+                stmt.setNull(18, java.sql.Types.INTEGER);
+                stmt.setNull(19, java.sql.Types.INTEGER);
+                stmt.setNull(20, java.sql.Types.INTEGER);
+            }
+            
+            int rowsAffected = stmt.executeUpdate();
+            
+            if (rowsAffected > 0) {
+                // Use SQLite's last_insert_rowid() instead of getGeneratedKeys()
+                try (PreparedStatement idStmt = getConnection().prepareStatement("SELECT last_insert_rowid()")) {
+                    try (ResultSet rs = idStmt.executeQuery()) {
+                        if (rs.next()) {
+                            long id = rs.getLong(1);
+                            logger.debug("Stored raw traffic with timing data: {} {} with ID {} (Source: {})", 
+                                       method, url, id, source);
+                            return id;
+                        }
+                    }
+                }
+            }
+            
+        } catch (SQLException e) {
+            if (e.getMessage().contains("UNIQUE constraint failed")) {
+                logger.debug("Duplicate record detected by database constraint: {} {} (Source: {})", 
+                           method, url, source);
+                return -2; // Indicate duplicate was rejected by database
+            }
+            logger.error("Failed to store raw traffic with timing data: " + source, e);
+        }
+        
+        return -1;
+    }
+    
+    /**
      * Stores a traffic record using the normalized schema with optimized batch processing.
      * Uses the new traffic_meta, traffic_requests, and traffic_responses tables.
      * 
@@ -1480,7 +1698,7 @@ public class DatabaseService {
      */
     public long storeTrafficNormalized(String method, String url, String host, String headers, String body,
                                       String responseHeaders, String responseBody, Integer statusCode, 
-                                      String sessionTag, TrafficSource source) {
+                                      String sessionTag, TrafficSource source, String requestHttpVersion, String responseHttpVersion) {
         if (shutdown.get() || connection == null) {
             return -1;
         }
@@ -1490,7 +1708,8 @@ public class DatabaseService {
             if (!schemaManager.isNormalizedSchemaAvailable(connection)) {
                 // Fall back to legacy method
                 return storeRawTrafficWithSource(method, url, host, headers, body, 
-                                               responseHeaders, responseBody, statusCode, sessionTag, source);
+                                               responseHeaders, responseBody, statusCode, sessionTag, source, 
+                                               requestHttpVersion, responseHttpVersion);
             }
             
             // Generate content hash for deduplication
@@ -1540,6 +1759,16 @@ public class DatabaseService {
             logger.error("Failed to store normalized traffic", e);
             return -1;
         }
+    }
+    
+    /**
+     * Overloaded method for backward compatibility - without HTTP version parameters
+     */
+    public long storeTrafficNormalized(String method, String url, String host, String headers, String body,
+                                      String responseHeaders, String responseBody, Integer statusCode, 
+                                      String sessionTag, TrafficSource source) {
+        return storeTrafficNormalized(method, url, host, headers, body, responseHeaders, responseBody, 
+                                     statusCode, sessionTag, source, null, null);
     }
     
     /**
@@ -1699,10 +1928,8 @@ public class DatabaseService {
                 params.add(searchParams.get("method"));
             }
             
-            if (searchParams.containsKey("host")) {
-                sql.append("AND tm.host LIKE ? ");
-                params.add("%" + searchParams.get("host") + "%");
-            }
+            // Handle host filtering (single or multiple)
+            addHostFilteringFromObjectMap(sql, params, searchParams, false, "tm.host");
             
             if (searchParams.containsKey("url")) {
                 sql.append("AND tm.url LIKE ? ");
@@ -1916,6 +2143,10 @@ public class DatabaseService {
                     record.put("response_headers", rs.getString("response_headers"));
                     record.put("response_body", rs.getString("response_body"));
                     record.put("session_tag", rs.getString("session_tag"));
+                    record.put("content_hash", rs.getString("content_hash"));
+                    record.put("traffic_source", rs.getString("traffic_source"));
+                    record.put("request_http_version", rs.getString("request_http_version"));
+                    record.put("response_http_version", rs.getString("response_http_version"));
                     return record;
                 }
             }
@@ -1934,21 +2165,27 @@ public class DatabaseService {
      * @return Statistics data grouped by various dimensions
      */
     public Map<String, Object> getTrafficStats(Map<String, String> searchParams) {
-        if (shutdown.get() || connection == null) {
+        if (shutdown.get()) {
+            return new HashMap<>();
+        }
+        
+        Connection conn = getConnection();
+        if (conn == null) {
+            logger.error("Database connection is null in getTrafficStats, returning empty stats");
             return new HashMap<>();
         }
         
         Map<String, Object> stats = new HashMap<>();
+        
+        logger.info("DEBUG: getTrafficStats called with params: {}", searchParams);
         
         try {
             // Build base WHERE clause from search parameters
             StringBuilder whereClause = new StringBuilder("WHERE 1=1");
             List<Object> parameters = new ArrayList<>();
             
-            if (searchParams.containsKey("host")) {
-                whereClause.append(" AND host LIKE ?");
-                parameters.add("%" + searchParams.get("host") + "%");
-            }
+            // Handle host filtering (single or multiple)
+            addHostFiltering(whereClause, parameters, searchParams, false);
             if (searchParams.containsKey("method")) {
                 whereClause.append(" AND method = ?");
                 parameters.add(searchParams.get("method"));
@@ -1966,9 +2203,12 @@ public class DatabaseService {
                 parameters.add(parseTimestamp(searchParams.get("end_time")));
             }
             
+            // Add incremental update support with "since" parameter
+            addTimestampFiltering(whereClause, parameters, searchParams);
+            
             // Total count
             String totalSql = "SELECT COUNT(*) as total FROM proxy_traffic " + whereClause;
-            try (PreparedStatement stmt = getConnection().prepareStatement(totalSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(totalSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -1981,7 +2221,7 @@ public class DatabaseService {
             // Count of requests with responses
             String completedSql = "SELECT COUNT(*) as completed FROM proxy_traffic " + 
                                 whereClause + " AND status_code IS NOT NULL";
-            try (PreparedStatement stmt = getConnection().prepareStatement(completedSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(completedSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -1994,7 +2234,7 @@ public class DatabaseService {
             // Count of orphaned requests (no response)
             String orphanedSql = "SELECT COUNT(*) as orphaned FROM proxy_traffic " + 
                                 whereClause + " AND status_code IS NULL";
-            try (PreparedStatement stmt = getConnection().prepareStatement(orphanedSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(orphanedSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -2008,7 +2248,7 @@ public class DatabaseService {
             String recentOrphanedSql = "SELECT COUNT(*) as recent_orphaned FROM proxy_traffic " + 
                                      whereClause + " AND status_code IS NULL " +
                                      "AND timestamp > datetime('now', '-10 minutes')";
-            try (PreparedStatement stmt = getConnection().prepareStatement(recentOrphanedSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(recentOrphanedSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -2018,10 +2258,29 @@ public class DatabaseService {
                 }
             }
             
-            // Stats by host
+            // Stats by host - support configurable limit
+            String hostLimit = "";
+            if (searchParams.containsKey("all_hosts") && "true".equals(searchParams.get("all_hosts"))) {
+                // No limit when all_hosts=true
+                hostLimit = "";
+            } else if (searchParams.containsKey("host_limit")) {
+                try {
+                    int limit = Integer.parseInt(searchParams.get("host_limit"));
+                    if (limit > 0 && limit <= 10000) { // Cap at reasonable maximum
+                        hostLimit = " LIMIT " + limit;
+                    } else {
+                        hostLimit = " LIMIT 50"; // Default fallback
+                    }
+                } catch (NumberFormatException e) {
+                    hostLimit = " LIMIT 50"; // Default fallback
+                }
+            } else {
+                hostLimit = " LIMIT 50"; // Default behavior
+            }
+            
             String hostSql = "SELECT host, COUNT(*) as count FROM proxy_traffic " + 
-                           whereClause + " GROUP BY host ORDER BY count DESC LIMIT 50";
-            try (PreparedStatement stmt = getConnection().prepareStatement(hostSql)) {
+                           whereClause + " GROUP BY host ORDER BY count DESC" + hostLimit;
+            try (PreparedStatement stmt = conn.prepareStatement(hostSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -2039,7 +2298,7 @@ public class DatabaseService {
             // Stats by method
             String methodSql = "SELECT method, COUNT(*) as count FROM proxy_traffic " + 
                              whereClause + " GROUP BY method ORDER BY count DESC";
-            try (PreparedStatement stmt = getConnection().prepareStatement(methodSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(methodSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -2057,7 +2316,7 @@ public class DatabaseService {
             // Stats by status code
             String statusSql = "SELECT status_code, COUNT(*) as count FROM proxy_traffic " + 
                              whereClause + " AND status_code IS NOT NULL GROUP BY status_code ORDER BY count DESC";
-            try (PreparedStatement stmt = getConnection().prepareStatement(statusSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(statusSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -2075,7 +2334,7 @@ public class DatabaseService {
             // Stats by session tag
             String sessionSql = "SELECT session_tag, COUNT(*) as count FROM proxy_traffic " + 
                               whereClause + " GROUP BY session_tag ORDER BY count DESC LIMIT 20";
-            try (PreparedStatement stmt = getConnection().prepareStatement(sessionSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(sessionSql)) {
                 for (int i = 0; i < parameters.size(); i++) {
                     stmt.setObject(i + 1, parameters.get(i));
                 }
@@ -2091,7 +2350,11 @@ public class DatabaseService {
             }
             
         } catch (SQLException e) {
-            logger.error("Failed to get traffic statistics", e);
+            logger.error("CRITICAL: Failed to get traffic statistics - SQL Error: {}", e.getMessage(), e);
+            stats.put("error", "Database query failed: " + e.getMessage());
+        } catch (Exception e) {
+            logger.error("CRITICAL: Unexpected error in getTrafficStats: {}", e.getMessage(), e);
+            stats.put("error", "Unexpected error: " + e.getMessage());
         }
         
         return stats;
@@ -2103,7 +2366,13 @@ public class DatabaseService {
      * @return Statistics data grouped by traffic source
      */
     public Map<String, Object> getTrafficStatsBySource() {
-        if (shutdown.get() || connection == null) {
+        if (shutdown.get()) {
+            return new HashMap<>();
+        }
+        
+        Connection conn = getConnection();
+        if (conn == null) {
+            logger.error("Database connection is null in getTrafficStatsBySource, returning empty stats");
             return new HashMap<>();
         }
         
@@ -2114,7 +2383,7 @@ public class DatabaseService {
             String sourceSql = "SELECT traffic_source, COUNT(*) as count FROM proxy_traffic " +
                              "GROUP BY traffic_source ORDER BY count DESC";
             
-            try (PreparedStatement stmt = getConnection().prepareStatement(sourceSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(sourceSql)) {
                 ResultSet rs = stmt.executeQuery();
                 List<Map<String, Object>> sourceStats = new ArrayList<>();
                 while (rs.next()) {
@@ -2134,7 +2403,7 @@ public class DatabaseService {
                                   "COUNT(CASE WHEN status_code >= 400 THEN 1 END) as error_requests " +
                                   "FROM proxy_traffic GROUP BY traffic_source ORDER BY total_requests DESC";
             
-            try (PreparedStatement stmt = getConnection().prepareStatement(successRateSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(successRateSql)) {
                 ResultSet rs = stmt.executeQuery();
                 List<Map<String, Object>> successRateStats = new ArrayList<>();
                 while (rs.next()) {
@@ -2175,7 +2444,7 @@ public class DatabaseService {
                              "FROM proxy_traffic WHERE timestamp > datetime('now', '-24 hours') " +
                              "GROUP BY traffic_source ORDER BY recent_count DESC";
             
-            try (PreparedStatement stmt = getConnection().prepareStatement(recentSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(recentSql)) {
                 ResultSet rs = stmt.executeQuery();
                 List<Map<String, Object>> recentStats = new ArrayList<>();
                 while (rs.next()) {
@@ -2189,7 +2458,7 @@ public class DatabaseService {
             
             // Overall summary
             String totalSql = "SELECT COUNT(*) as total_records FROM proxy_traffic";
-            try (PreparedStatement stmt = getConnection().prepareStatement(totalSql)) {
+            try (PreparedStatement stmt = conn.prepareStatement(totalSql)) {
                 ResultSet rs = stmt.executeQuery();
                 if (rs.next()) {
                     stats.put("total_records", rs.getLong("total_records"));
@@ -2225,10 +2494,8 @@ public class DatabaseService {
             StringBuilder whereClause = new StringBuilder("WHERE 1=1");
             List<Object> parameters = new ArrayList<>();
             
-            if (searchParams.containsKey("host")) {
-                whereClause.append(" AND host LIKE ?");
-                parameters.add("%" + searchParams.get("host") + "%");
-            }
+            // Handle host filtering (single or multiple)
+            addHostFiltering(whereClause, parameters, searchParams, false);
             if (searchParams.containsKey("method")) {
                 whereClause.append(" AND method = ?");
                 parameters.add(searchParams.get("method"));
@@ -2407,13 +2674,10 @@ public class DatabaseService {
             List<Object> parameters = new ArrayList<>();
             
             // Apply search filters
-            if (searchParams.containsKey("host")) {
-                String caseClause = searchParams.containsKey("case_insensitive") && 
-                                  Boolean.parseBoolean(searchParams.get("case_insensitive")) ? 
-                                  "LOWER(host) LIKE LOWER(?)" : "host LIKE ?";
-                sql.append(" AND ").append(caseClause);
-                parameters.add("%" + searchParams.get("host") + "%");
-            }
+            // Handle host filtering (single or multiple)
+            boolean caseInsensitive = searchParams.containsKey("case_insensitive") && 
+                                    Boolean.parseBoolean(searchParams.get("case_insensitive"));
+            addHostFiltering(sql, parameters, searchParams, caseInsensitive);
             if (searchParams.containsKey("method")) {
                 sql.append(" AND method = ?");
                 parameters.add(searchParams.get("method"));
@@ -3420,13 +3684,7 @@ public class DatabaseService {
             placeholders.append("?");
         }
         
-        String sql = "SELECT tm.*, tr.headers as request_headers, tr.body as request_body, " +
-                    "tres.status_code, tres.headers as response_headers, tres.body as response_body " +
-                    "FROM traffic_meta tm " +
-                    "LEFT JOIN traffic_requests tr ON tm.id = tr.traffic_meta_id " +
-                    "LEFT JOIN traffic_responses tres ON tm.id = tres.traffic_meta_id " +
-                    "WHERE tm.id IN (" + placeholders + ") " +
-                    "ORDER BY tm.timestamp DESC";
+        String sql = "SELECT id, timestamp, method, url, host, status_code, headers, body, response_headers, response_body, session_tag, content_hash, traffic_source, request_http_version, response_http_version, dns_resolution_time, connection_time, tls_negotiation_time, request_time, response_time, total_time FROM proxy_traffic WHERE id IN (" + placeholders + ") ORDER BY timestamp DESC";
         
         List<Map<String, Object>> results = new ArrayList<>();
         
@@ -3444,16 +3702,25 @@ public class DatabaseService {
                     record.put("method", rs.getString("method"));
                     record.put("url", rs.getString("url"));
                     record.put("host", rs.getString("host"));
-                    record.put("session_tag", rs.getString("session_tag"));
-                    record.put("tool_source", rs.getString("tool_source"));
-                    record.put("tags", rs.getString("tags"));
-                    record.put("comment", rs.getString("comment"));
-                    record.put("replayed_from", rs.getLong("replayed_from"));
-                    record.put("request_headers", rs.getString("request_headers"));
-                    record.put("request_body", rs.getString("request_body"));
                     record.put("status_code", rs.getObject("status_code"));
+                    record.put("headers", rs.getString("headers"));
+                    record.put("body", rs.getString("body"));
                     record.put("response_headers", rs.getString("response_headers"));
                     record.put("response_body", rs.getString("response_body"));
+                    record.put("session_tag", rs.getString("session_tag"));
+                    record.put("content_hash", rs.getString("content_hash"));
+                    record.put("traffic_source", rs.getString("traffic_source"));
+                    record.put("request_http_version", rs.getString("request_http_version"));
+                    record.put("response_http_version", rs.getString("response_http_version"));
+                    
+                    // Add timing data
+                    record.put("dns_resolution_time", rs.getObject("dns_resolution_time"));
+                    record.put("connection_time", rs.getObject("connection_time"));
+                    record.put("tls_negotiation_time", rs.getObject("tls_negotiation_time"));
+                    record.put("request_time", rs.getObject("request_time"));
+                    record.put("response_time", rs.getObject("response_time"));
+                    record.put("total_time", rs.getObject("total_time"));
+                    
                     results.add(record);
                 }
             }
@@ -4002,6 +4269,136 @@ public class DatabaseService {
         } catch (SQLException e) {
             logger.error("Failed to bulk clear comments: {}", e.getMessage(), e);
             return 0;
+        }
+    }
+    
+    /**
+     * Helper method to add host filtering to SQL queries.
+     * Supports both single host and multiple hosts filtering.
+     * 
+     * @param sql The StringBuilder to append to
+     * @param params The parameter list to add to
+     * @param searchParams The search parameters map
+     * @param caseInsensitive Whether to use case-insensitive comparison
+     */
+    private void addHostFiltering(StringBuilder sql, List<Object> params, 
+                                 Map<String, String> searchParams, boolean caseInsensitive) {
+        addHostFiltering(sql, params, searchParams, caseInsensitive, "host");
+    }
+    
+    /**
+     * Overloaded helper method to add host filtering with custom column name.
+     * 
+     * @param sql The StringBuilder to append to
+     * @param params The parameter list to add to
+     * @param searchParams The search parameters map
+     * @param caseInsensitive Whether to use case-insensitive comparison
+     * @param columnName The host column name (e.g., "host" or "tm.host")
+     */
+    private void addHostFiltering(StringBuilder sql, List<Object> params, 
+                                 Map<String, String> searchParams, boolean caseInsensitive, String columnName) {
+        if (searchParams.containsKey("host")) {
+            String hostLikeOperator = caseInsensitive ? 
+                " AND LOWER(" + columnName + ") LIKE LOWER(?)" : 
+                " AND " + columnName + " LIKE ?";
+            sql.append(hostLikeOperator);
+            params.add("%" + searchParams.get("host") + "%");
+        } else if (searchParams.containsKey("hosts")) {
+            String[] hostList = searchParams.get("hosts").split(",");
+            if (hostList.length > 0) {
+                sql.append(" AND (");
+                for (int i = 0; i < hostList.length; i++) {
+                    if (i > 0) sql.append(" OR ");
+                    String hostClause = caseInsensitive ? 
+                        "LOWER(" + columnName + ") LIKE LOWER(?)" : 
+                        columnName + " LIKE ?";
+                    sql.append(hostClause);
+                    params.add("%" + hostList[i].trim() + "%");
+                }
+                sql.append(")");
+            }
+        }
+    }
+    
+    /**
+     * Helper method for Map<String, Object> parameter type.
+     */
+    private void addHostFilteringFromObjectMap(StringBuilder sql, List<Object> params, 
+                                              Map<String, Object> searchParams, boolean caseInsensitive, String columnName) {
+        if (searchParams.containsKey("host")) {
+            String hostLikeOperator = caseInsensitive ? 
+                " AND LOWER(" + columnName + ") LIKE LOWER(?)" : 
+                " AND " + columnName + " LIKE ?";
+            sql.append(hostLikeOperator);
+            params.add("%" + searchParams.get("host").toString() + "%");
+        } else if (searchParams.containsKey("hosts")) {
+            String[] hostList = searchParams.get("hosts").toString().split(",");
+            if (hostList.length > 0) {
+                sql.append(" AND (");
+                for (int i = 0; i < hostList.length; i++) {
+                    if (i > 0) sql.append(" OR ");
+                    String hostClause = caseInsensitive ? 
+                        "LOWER(" + columnName + ") LIKE LOWER(?)" : 
+                        columnName + " LIKE ?";
+                    sql.append(hostClause);
+                    params.add("%" + hostList[i].trim() + "%");
+                }
+                sql.append(")");
+            }
+        }
+    }
+    
+    /**
+     * Helper method to add timestamp filtering for incremental updates.
+     * 
+     * @param sql The StringBuilder to append to
+     * @param params The parameter list to add to
+     * @param searchParams The search parameters map
+     */
+    private void addTimestampFiltering(StringBuilder sql, List<Object> params, Map<String, String> searchParams) {
+        if (searchParams.containsKey("since")) {
+            String since = searchParams.get("since");
+            try {
+                // Support both timestamp and ISO date formats
+                if (since.matches("\\d+")) {
+                    // Unix timestamp in milliseconds
+                    long timestamp = Long.parseLong(since);
+                    sql.append(" AND timestamp > datetime(?, 'unixepoch')");
+                    params.add(timestamp / 1000); // SQLite expects seconds
+                } else {
+                    // ISO 8601 format (e.g., 2024-01-15T10:30:00)
+                    sql.append(" AND timestamp > ?");
+                    params.add(since);
+                }
+            } catch (NumberFormatException e) {
+                // Invalid timestamp format - ignore filter
+                logger.warn("Invalid timestamp format for 'since' parameter: {}", since);
+            }
+        }
+    }
+    
+    /**
+     * Helper method for Map<String, Object> parameter type.
+     */
+    private void addTimestampFilteringFromObjectMap(StringBuilder sql, List<Object> params, Map<String, Object> searchParams) {
+        if (searchParams.containsKey("since")) {
+            String since = searchParams.get("since").toString();
+            try {
+                // Support both timestamp and ISO date formats
+                if (since.matches("\\d+")) {
+                    // Unix timestamp in milliseconds
+                    long timestamp = Long.parseLong(since);
+                    sql.append(" AND timestamp > datetime(?, 'unixepoch')");
+                    params.add(timestamp / 1000); // SQLite expects seconds
+                } else {
+                    // ISO 8601 format (e.g., 2024-01-15T10:30:00)
+                    sql.append(" AND timestamp > ?");
+                    params.add(since);
+                }
+            } catch (NumberFormatException e) {
+                // Invalid timestamp format - ignore filter
+                logger.warn("Invalid timestamp format for 'since' parameter: {}", since);
+            }
         }
     }
 } 

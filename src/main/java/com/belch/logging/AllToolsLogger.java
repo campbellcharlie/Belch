@@ -232,22 +232,29 @@ public class AllToolsLogger implements HttpHandler {
             String host = actualRequest.httpService().host();
             String requestHeaders = actualRequest.headers().toString();
             String requestBody = actualRequest.bodyToString();
+            String requestHttpVersion = actualRequest.httpVersion();
             
             // Extract response details
             String responseHeaders = response.headers().toString();
             String responseBody = response.bodyToString();
             int statusCode = response.statusCode();
+            String responseHttpVersion = response.httpVersion();
             
             // Create session tag with tool source
             String sessionTag = config.getSessionTag() + "_" + toolSource.toLowerCase();
             
-            // Store using the enhanced method with source tracking
+            // Create basic timing data (timingData() method not available in HttpResponseReceived)
+            com.belch.models.TimingData timingData = com.belch.models.TimingData.createEmpty();
+            
+            // Store using the enhanced method with source tracking and timing data
             long recordId = databaseService.storeRawTrafficWithSource(
                 method, url, host,
                 requestHeaders, requestBody,
                 responseHeaders, responseBody,
                 statusCode, sessionTag,
-                TrafficSource.valueOf(toolSource)
+                TrafficSource.valueOf(toolSource),
+                requestHttpVersion, responseHttpVersion,
+                timingData
             );
             
             if (recordId > 0) {

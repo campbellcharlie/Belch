@@ -22,7 +22,7 @@
         <maven.build.timestamp.format>yyyy-MM-dd HH:mm:ss</maven.build.timestamp.format>
         
         <!-- Dependency Versions -->
-        <montoya.api.version>2025.6</montoya.api.version>
+        <montoya.api.version>2025.8</montoya.api.version>
         <jackson.version>2.16.1</jackson.version>
         <sqlite.version>3.44.1.0</sqlite.version>
         <javalin.version>5.6.3</javalin.version>

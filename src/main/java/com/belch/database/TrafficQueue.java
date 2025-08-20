@@ -96,6 +96,8 @@ public class TrafficQueue {
         public final String responseHeaders;
         public final String responseBody;
         public final Integer statusCode;
+        public final String requestHttpVersion;
+        public final String responseHttpVersion;
         
         // Request constructor
         public TrafficItem(InterceptedRequest request, String sessionTag) {
@@ -113,6 +115,8 @@ public class TrafficQueue {
             this.responseHeaders = null;
             this.responseBody = null;
             this.statusCode = null;
+            this.requestHttpVersion = null;
+            this.responseHttpVersion = null;
         }
         
         // Response constructor
@@ -131,12 +135,14 @@ public class TrafficQueue {
             this.responseHeaders = null;
             this.responseBody = null;
             this.statusCode = null;
+            this.requestHttpVersion = null;
+            this.responseHttpVersion = null;
         }
         
         // Raw traffic constructor
         public TrafficItem(String method, String url, String host, String headers, String body,
                           String responseHeaders, String responseBody, Integer statusCode, 
-                          String sessionTag, TrafficSource source) {
+                          String sessionTag, TrafficSource source, String requestHttpVersion, String responseHttpVersion) {
             this.type = Type.RAW_TRAFFIC;
             this.timestamp = System.currentTimeMillis();
             this.request = null;
@@ -151,6 +157,16 @@ public class TrafficQueue {
             this.responseHeaders = responseHeaders;
             this.responseBody = responseBody;
             this.statusCode = statusCode;
+            this.requestHttpVersion = requestHttpVersion;
+            this.responseHttpVersion = responseHttpVersion;
+        }
+        
+        // Overloaded constructor for backward compatibility
+        public TrafficItem(String method, String url, String host, String headers, String body,
+                          String responseHeaders, String responseBody, Integer statusCode, 
+                          String sessionTag, TrafficSource source) {
+            this(method, url, host, headers, body, responseHeaders, responseBody, statusCode, 
+                 sessionTag, source, null, null);
         }
     }
     
@@ -431,7 +447,7 @@ public class TrafficQueue {
                             long result = databaseService.storeTrafficNormalized(
                                 item.method, item.url, item.host, item.headers, item.body,
                                 item.responseHeaders, item.responseBody, item.statusCode, 
-                                item.sessionTag, item.source
+                                item.sessionTag, item.source, item.requestHttpVersion, item.responseHttpVersion
                             );
                             
                             if (result > 0) {

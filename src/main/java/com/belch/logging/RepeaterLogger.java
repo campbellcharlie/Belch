@@ -168,19 +168,27 @@ public class RepeaterLogger implements HttpHandler {
             String responseBody = response.bodyToString();
             int statusCode = response.statusCode();
             
+            // Extract HTTP versions
+            String requestHttpVersion = request.httpVersion();
+            String responseHttpVersion = response.httpVersion();
+            
             // Get current session tag from API
             String sessionTag = api.persistence().preferences().getString("session_tag");
             if (sessionTag == null || sessionTag.trim().isEmpty()) {
                 sessionTag = "session_" + System.currentTimeMillis() + "_repeater";
             }
             
-            // Store using the enhanced method with source tracking
+            // Create basic timing data (timingData() method not available in HttpResponseReceived)
+            com.belch.models.TimingData timingData = com.belch.models.TimingData.createEmpty();
+            
+            // Store using the enhanced method with source tracking and timing data
             long recordId = databaseService.storeRawTrafficWithSource(
                 method, url, host,
                 requestHeaders, requestBody,
                 responseHeaders, responseBody,
                 statusCode, sessionTag,
-                TrafficSource.REPEATER
+                TrafficSource.REPEATER, requestHttpVersion, responseHttpVersion,
+                timingData
             );
             
             if (recordId > 0) {

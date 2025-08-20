@@ -388,11 +388,13 @@ public class ProxyRouteRegistrar {
         if (ctx.queryParam("url_pattern") != null) searchParams.put("url_pattern", ctx.queryParam("url_pattern"));
         if (ctx.queryParam("method") != null) searchParams.put("method", ctx.queryParam("method"));
         if (ctx.queryParam("host") != null) searchParams.put("host", ctx.queryParam("host"));
+        if (ctx.queryParam("hosts") != null) searchParams.put("hosts", ctx.queryParam("hosts")); // Support bulk hosts filter
         if (ctx.queryParam("status_code") != null) searchParams.put("status_code", ctx.queryParam("status_code"));
         if (ctx.queryParam("session_tag") != null) searchParams.put("session_tag", ctx.queryParam("session_tag"));
         if (ctx.queryParam("case_insensitive") != null) searchParams.put("case_insensitive", ctx.queryParam("case_insensitive"));
         if (ctx.queryParam("start_time") != null) searchParams.put("start_time", ctx.queryParam("start_time"));
         if (ctx.queryParam("end_time") != null) searchParams.put("end_time", ctx.queryParam("end_time"));
+        if (ctx.queryParam("since") != null) searchParams.put("since", ctx.queryParam("since")); // Support incremental updates
         if (ctx.queryParam("limit") != null) searchParams.put("limit", ctx.queryParam("limit"));
         if (ctx.queryParam("offset") != null) searchParams.put("offset", ctx.queryParam("offset"));
         

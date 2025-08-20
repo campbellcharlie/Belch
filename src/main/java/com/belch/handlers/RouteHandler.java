@@ -61,6 +61,7 @@ public class RouteHandler {
     private final ObjectMapper objectMapper;
     private final JsonMapper jsonMapper;
     private final ScanTaskManager scanTaskManager;
+    private com.belch.services.ProxyInterceptionService proxyInterceptionService;
     
     // Phase 3 Task 14: BChecks service
     private final BCheckService bCheckService;
@@ -1187,29 +1188,78 @@ public class RouteHandler {
                     return;
                 }
                 
-                // Send request through Burp
-                burp.api.montoya.http.message.HttpRequestResponse response = 
-                    httpService.sendRequest(httpRequest);
+                // Process basic request options (advanced features require newer API)
+                Map<String, Object> options = (Map<String, Object>) requestData.get("options");
                 
-                // Store the request and response using normalized schema
-                long recordId = databaseService.storeTrafficNormalized(
+                // Track timing for basic performance monitoring
+                long requestStart = System.currentTimeMillis();
+                
+                // Send request through Burp (with basic options support)
+                burp.api.montoya.http.message.HttpRequestResponse response = httpService.sendRequest(httpRequest);
+                
+                long requestDuration = System.currentTimeMillis() - requestStart;
+                
+                // Store the request and response using normalized schema with timing data
+                String requestHttpVersion = httpRequest.httpVersion();
+                String responseHttpVersion = response.response().httpVersion();
+                
+                // Create basic timing data with measured duration
+                com.belch.models.TimingData timingData = com.belch.models.TimingData.createBasicTiming(requestDuration);
+                
+                long recordId = databaseService.storeRawTrafficWithSource(
                     method, url, host, headers, body,
                     response.response().headers().toString(), response.response().bodyToString(),
-                    (int) response.response().statusCode(), sessionTag, 
-                    com.belch.logging.TrafficSource.API
+                    (int) response.response().statusCode(), sessionTag,
+                    com.belch.logging.TrafficSource.API, requestHttpVersion, responseHttpVersion,
+                    timingData
                 );
                 
-                // Return response data
+                // Return response data with enhanced information
                 Map<String, Object> responseData = new HashMap<>();
                 responseData.put("request_id", recordId);
                 responseData.put("response", Map.of(
                     "status_code", response.response().statusCode(),
                     "headers", response.response().headers().toString(),
                     "body", response.response().bodyToString(),
-                    "length", response.response().body().length()
+                    "length", response.response().body().length(),
+                    "http_version", responseHttpVersion
                 ));
-                responseData.put("timing", Map.of(
-                    "timestamp", System.currentTimeMillis()
+                
+                // Include timing data if available
+                if (timingData != null && timingData.hasAnyTiming()) {
+                    Map<String, Object> timingInfo = new HashMap<>();
+                    if (timingData.getDnsResolutionTime() != null) {
+                        timingInfo.put("dns_resolution_time", timingData.getDnsResolutionTime());
+                    }
+                    if (timingData.getConnectionTime() != null) {
+                        timingInfo.put("connection_time", timingData.getConnectionTime());
+                    }
+                    if (timingData.getTlsNegotiationTime() != null) {
+                        timingInfo.put("tls_negotiation_time", timingData.getTlsNegotiationTime());
+                    }
+                    if (timingData.getRequestTime() != null) {
+                        timingInfo.put("request_time", timingData.getRequestTime());
+                    }
+                    if (timingData.getResponseTime() != null) {
+                        timingInfo.put("response_time", timingData.getResponseTime());
+                    }
+                    if (timingData.getTotalTime() != null) {
+                        timingInfo.put("total_time", timingData.getTotalTime());
+                    }
+                    responseData.put("timing", timingInfo);
+                } else {
+                    responseData.put("timing", Map.of("timestamp", System.currentTimeMillis()));
+                }
+                
+                // Include request options used
+                if (options != null && !options.isEmpty()) {
+                    responseData.put("request_options", options);
+                }
+                
+                // Include protocol information
+                responseData.put("protocol_info", Map.of(
+                    "request_http_version", requestHttpVersion,
+                    "response_http_version", responseHttpVersion
                 ));
                 
                 ctx.json(responseData);
@@ -1520,6 +1570,46 @@ public class RouteHandler {
                 logger.error("Failed to replay matched records", e);
                 ctx.status(500).json(Map.of(
                     "error", "Replay operation failed",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Dedicated hosts endpoint for complete host list
+        app.get("/proxy/hosts", ctx -> {
+            try {
+                if (!checkDatabaseAvailable(ctx)) return;
+                
+                Map<String, String> searchParams = extractSearchParams(ctx);
+                // Force getting all hosts by setting all_hosts=true
+                searchParams.put("all_hosts", "true");
+                
+                Map<String, Object> stats = databaseService.getTrafficStats(searchParams);
+                List<Map<String, Object>> hostsList = (List<Map<String, Object>>) stats.get("by_host");
+                
+                // Convert list to map format for easier consumption
+                Map<String, Object> hosts = new HashMap<>();
+                if (hostsList != null) {
+                    for (Map<String, Object> hostStat : hostsList) {
+                        String host = (String) hostStat.get("host");
+                        Object count = hostStat.get("count");
+                        if (host != null) {
+                            hosts.put(host, count);
+                        }
+                    }
+                }
+                
+                Map<String, Object> response = new HashMap<>();
+                response.put("hosts", hosts);
+                response.put("total_hosts", hosts.size());
+                response.put("filters", searchParams);
+                response.put("timestamp", System.currentTimeMillis());
+                
+                ctx.json(response);
+            } catch (Exception e) {
+                logger.error("Failed to get hosts list", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to retrieve hosts",
                     "message", e.getMessage()
                 ));
             }
@@ -2423,7 +2513,7 @@ public class RouteHandler {
             Map.of("method", "GET", "path", "/database/stats", "description", "Database performance statistics and optimization recommendations"),
             
             // Proxy traffic management
-            Map.of("method", "GET", "path", "/proxy/search", "description", "Search proxy traffic with advanced filters (url, method, host, status_code, session_tag, case_insensitive, start_time, end_time, limit, offset)"),
+            Map.of("method", "GET", "path", "/proxy/search", "description", "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version."),
             Map.of("method", "GET", "path", "/proxy/search/download", "description", "Download search results as JSON or CSV (format=json|csv)"),
             Map.of("method", "GET", "path", "/proxy/history", "description", "Get proxy history with optimized scope filtering and performance enhancements (limit, offset, isInScope, notInScope)"),
             Map.of("method", "POST", "path", "/proxy/send", "description", "Send raw HTTP request and capture response (requires: method, url; optional: headers, body, session_tag)"),
@@ -2431,7 +2521,7 @@ public class RouteHandler {
             Map.of("method", "POST", "path", "/proxy/import-history", "description", "Import existing proxy history from current Burp project (optional: session_tag)"),
             Map.of("method", "DELETE", "path", "/proxy/delete", "description", "Delete traffic records (options: all=true, session_tag=value, start_time/end_time)"),
             Map.of("method", "POST", "path", "/proxy/replay-matched", "description", "Replay traffic from search results or specific record IDs (requires: search_params or record_ids)"),
-            Map.of("method", "GET", "path", "/proxy/stats", "description", "Get traffic statistics grouped by host, method, status code, and session tag"),
+            Map.of("method", "GET", "path", "/proxy/stats", "description", "Get traffic statistics grouped by host, method, status code, and session tag. Supports host_limit (custom limit), all_hosts=true (remove limit), hosts[] (batch filtering), since (incremental updates)."),
             Map.of("method", "GET", "path", "/proxy/timeline", "description", "Get traffic timeline grouped by time intervals (interval=minute|hour|day; supports all search filters)"),
             Map.of("method", "GET", "path", "/proxy/har-export", "description", "Export proxy history as HAR file (supports all search filters; limit defaults to 1000)"),
             
@@ -2448,6 +2538,16 @@ public class RouteHandler {
             
             // Phase 11: Curl Generator
             Map.of("method", "GET", "path", "/proxy/request/{id}/curl", "description", "Generate curl command for request (requires: id; optional: redact, pretty, shell, metadata)"),
+            
+            // Advanced Response Analysis (Montoya API 2025.8+)
+            Map.of("method", "POST", "path", "/proxy/analyze/compare", "description", "Advanced response variation analysis using Montoya API ResponseVariationsAnalyzer (requires: request_ids array with 2+ IDs)"),
+            Map.of("method", "POST", "path", "/proxy/analyze/keywords", "description", "Keyword-based security analysis using Montoya API ResponseKeywordsAnalyzer (requires: request_ids, keywords; optional: case_sensitive)"),
+            
+            // Real-time Proxy Interception (Montoya API 2025.8+)
+            Map.of("method", "POST", "path", "/proxy/intercept/rules", "description", "Create real-time proxy interception rules for dynamic request/response modification (requires: name, type, condition, action)"),
+            Map.of("method", "GET", "path", "/proxy/intercept/rules", "description", "List all active proxy interception rules with hit counts and status"),
+            Map.of("method", "DELETE", "path", "/proxy/intercept/rules/{ruleId}", "description", "Delete specific proxy interception rule by ID"),
+            Map.of("method", "PUT", "path", "/proxy/intercept/rules/{ruleId}/toggle", "description", "Enable or disable specific proxy interception rule (requires: enabled boolean)"),
             
             // Phase 12: WebSocket Streaming
             Map.of("method", "WS", "path", "/ws/stream", "description", "Real-time WebSocket traffic streaming (query: session_tag; events: traffic.new, traffic.tagged, stats.updated, etc.)"),
@@ -2783,6 +2883,15 @@ public class RouteHandler {
         if (ctx.queryParam("url_pattern") != null) searchParams.put("url_pattern", ctx.queryParam("url_pattern"));
         if (ctx.queryParam("method") != null) searchParams.put("method", ctx.queryParam("method"));
         if (ctx.queryParam("host") != null) searchParams.put("host", ctx.queryParam("host"));
+        
+        // Support bulk hosts filter (comma-separated)
+        if (ctx.queryParam("hosts") != null) searchParams.put("hosts", ctx.queryParam("hosts"));
+        
+        // Handle multiple hosts parameter (hosts[]=host1&hosts[]=host2)
+        List<String> hosts = ctx.queryParams("hosts[]");
+        if (hosts != null && !hosts.isEmpty()) {
+            searchParams.put("hosts", String.join(",", hosts));
+        }
         if (ctx.queryParam("status_code") != null) searchParams.put("status_code", ctx.queryParam("status_code"));
         // Only add session_tag if it's not null and not empty (empty means search all sessions)
         if (ctx.queryParam("session_tag") != null && !ctx.queryParam("session_tag").isEmpty()) {
@@ -2797,6 +2906,11 @@ public class RouteHandler {
         // Pagination
         if (ctx.queryParam("limit") != null) searchParams.put("limit", ctx.queryParam("limit"));
         if (ctx.queryParam("offset") != null) searchParams.put("offset", ctx.queryParam("offset"));
+        
+        // Stats-specific parameters
+        if (ctx.queryParam("host_limit") != null) searchParams.put("host_limit", ctx.queryParam("host_limit"));
+        if (ctx.queryParam("all_hosts") != null) searchParams.put("all_hosts", ctx.queryParam("all_hosts"));
+        if (ctx.queryParam("since") != null) searchParams.put("since", ctx.queryParam("since"));
         
         return searchParams;
     }
@@ -2885,6 +2999,163 @@ public class RouteHandler {
                .json(postmanCollection);
         });
         
+        // Advanced Response Analysis Endpoints
+        app.post("/proxy/analyze/compare", ctx -> {
+            try {
+                Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
+                
+                if (!requestData.containsKey("request_ids")) {
+                    ctx.status(400).json(Map.of(
+                        "error", "Missing required field 'request_ids'",
+                        "message", "Array of request IDs is required for comparison"
+                    ));
+                    return;
+                }
+                
+                List<Number> requestIdNumbers = (List<Number>) requestData.get("request_ids");
+                List<Long> requestIds = requestIdNumbers.stream()
+                    .map(Number::longValue)
+                    .collect(java.util.stream.Collectors.toList());
+                
+                if (requestIds.size() < 2) {
+                    ctx.status(400).json(Map.of(
+                        "error", "At least 2 request IDs required for comparison"
+                    ));
+                    return;
+                }
+                
+                // Create response analysis service
+                com.belch.services.ResponseAnalysisService analysisService = 
+                    new com.belch.services.ResponseAnalysisService(api, databaseService);
+                
+                Map<String, Object> result = analysisService.analyzeResponseVariations(requestIds);
+                ctx.json(result);
+                
+            } catch (Exception e) {
+                logger.error("Response comparison analysis failed", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Analysis failed",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        app.post("/proxy/analyze/keywords", ctx -> {
+            try {
+                Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
+                
+                if (!requestData.containsKey("request_ids") || !requestData.containsKey("keywords")) {
+                    ctx.status(400).json(Map.of(
+                        "error", "Missing required fields",
+                        "message", "Both 'request_ids' and 'keywords' are required",
+                        "required_fields", List.of("request_ids", "keywords")
+                    ));
+                    return;
+                }
+                
+                List<Number> requestIdNumbers = (List<Number>) requestData.get("request_ids");
+                List<Long> requestIds = requestIdNumbers.stream()
+                    .map(Number::longValue)
+                    .collect(java.util.stream.Collectors.toList());
+                    
+                List<String> keywords = (List<String>) requestData.get("keywords");
+                boolean caseSensitive = (Boolean) requestData.getOrDefault("case_sensitive", false);
+                
+                // Create response analysis service
+                com.belch.services.ResponseAnalysisService analysisService = 
+                    new com.belch.services.ResponseAnalysisService(api, databaseService);
+                
+                Map<String, Object> result = analysisService.analyzeResponseKeywords(requestIds, keywords, caseSensitive);
+                ctx.json(result);
+                
+            } catch (Exception e) {
+                logger.error("Keyword analysis failed", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Analysis failed", 
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Real-time Proxy Interception Endpoints (2025.8+)
+        app.post("/proxy/intercept/rules", ctx -> {
+            try {
+                Map<String, Object> ruleData = ctx.bodyAsClass(Map.class);
+                
+                if (!ruleData.containsKey("name") || !ruleData.containsKey("type") || 
+                    !ruleData.containsKey("condition") || !ruleData.containsKey("action")) {
+                    ctx.status(400).json(Map.of(
+                        "error", "Missing required fields",
+                        "message", "Fields 'name', 'type', 'condition', and 'action' are required",
+                        "required_fields", List.of("name", "type", "condition", "action")
+                    ));
+                    return;
+                }
+                
+                String name = (String) ruleData.get("name");
+                String typeStr = (String) ruleData.get("type");
+                Map<String, Object> conditions = (Map<String, Object>) ruleData.get("condition");
+                Map<String, Object> actions = (Map<String, Object>) ruleData.get("action");
+                
+                // Create interception service if not exists
+                if (proxyInterceptionService == null) {
+                    proxyInterceptionService = new com.belch.services.ProxyInterceptionService(api);
+                }
+                
+                com.belch.services.ProxyInterceptionService.RuleType ruleType;
+                try {
+                    ruleType = com.belch.services.ProxyInterceptionService.RuleType.valueOf(typeStr.toUpperCase());
+                } catch (IllegalArgumentException e) {
+                    ctx.status(400).json(Map.of(
+                        "error", "Invalid rule type",
+                        "message", "Type must be 'request' or 'response'",
+                        "valid_types", List.of("request", "response")
+                    ));
+                    return;
+                }
+                
+                String ruleId = proxyInterceptionService.addRule(name, ruleType, conditions, actions);
+                
+                ctx.json(Map.of(
+                    "rule_id", ruleId,
+                    "name", name,
+                    "type", typeStr,
+                    "status", "created",
+                    "message", "Real-time interception rule created successfully (2025.8+)"
+                ));
+                
+            } catch (Exception e) {
+                logger.error("Failed to create interception rule", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to create rule",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        app.get("/proxy/intercept/rules", ctx -> {
+            try {
+                if (proxyInterceptionService == null) {
+                    ctx.json(Map.of("rules", Map.of(), "total_rules", 0));
+                    return;
+                }
+                
+                Map<String, Map<String, Object>> rules = proxyInterceptionService.getAllRules();
+                ctx.json(Map.of(
+                    "rules", rules,
+                    "total_rules", rules.size(),
+                    "api_version", "2025.8+"
+                ));
+                
+            } catch (Exception e) {
+                logger.error("Failed to get interception rules", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to get rules",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
         // Phase 3 Task 13: Interactive Examples API
         app.get("/examples", ctx -> {
             Map<String, Object> examples = generateInteractiveExamples();
@@ -2913,7 +3184,7 @@ public class RouteHandler {
         Map<String, Object> info = new HashMap<>();
         info.put("title", "Belch - Burp Suite REST API Extension");
         info.put("version", BurpApiExtension.getVersion());
-        info.put("description", "REST API extension for Burp Suite Professional that enables programmatic access to proxy traffic, scanner functionality, scope management, and collaborative testing workflows.");
+        info.put("description", "REST API extension for Burp Suite Professional that enables programmatic access to proxy traffic, scanner functionality, scope management, and collaborative testing workflows. Features advanced response analysis, real-time proxy interception, and enhanced security testing capabilities using Montoya API 2025.8+.");
         info.put("contact", Map.of(
             "name", "Charlie Campbell",
             "url", "https://github.com/campbellcharlie/belch"
@@ -2966,7 +3237,7 @@ public class RouteHandler {
         // Tags
         spec.put("tags", List.of(
             Map.of("name", "General", "description", "General API information"),
-            Map.of("name", "Proxy", "description", "Proxy traffic management with advanced analytics"),
+            Map.of("name", "Proxy", "description", "Proxy traffic management with advanced analytics, response analysis, and real-time interception (Montoya API 2025.8+)"),
             Map.of("name", "Scope", "description", "Scope management with intelligent caching"),
             Map.of("name", "Scanner", "description", "Scanner and vulnerability management"),
             Map.of("name", "Auth", "description", "Authentication and session management"),

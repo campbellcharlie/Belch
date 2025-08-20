@@ -94,7 +94,14 @@ public class ConfigurationRouteRegistrar {
         try {
             Map<String, Object> currentConfig = new HashMap<>();
             currentConfig.put("api.port", config.getPort());
-            currentConfig.put("database.path", config.getDatabasePath());
+            
+            // Use actual database path from DatabaseService instead of config
+            if (databaseService != null && databaseService.isInitialized()) {
+                currentConfig.put("database.path", databaseService.getCurrentDatabasePath());
+            } else {
+                currentConfig.put("database.path", config.getDatabasePath());
+            }
+            
             currentConfig.put("logging.verbose", config.isVerboseLogging());
             currentConfig.put("session.tag", config.getSessionTag());
             
