@@ -1123,34 +1123,15 @@ public class DatabaseService {
      * @return true if initialized, false otherwise
      */
     public boolean isInitialized() {
-        // Check both initialization flag AND connection pool validity
+        // SIMPLE CHECK: Just check the initialization flag
+        // Don't test connection pool on every health check - it's too expensive and error-prone
         boolean flagInitialized = initialized.get();
         if (!flagInitialized) {
             return false;
         }
         
-        // Check if connection pool is available and working
-        if (connectionPool != null) {
-            try {
-                // Test getting a connection from pool
-                Connection testConn = connectionPool.getConnection();
-                if (testConn != null && !testConn.isClosed()) {
-                    testConn.close(); // Return to pool
-                    return true;
-                }
-            } catch (SQLException e) {
-                logger.debug("Connection pool validity check failed: {}", e.getMessage());
-                return false;
-            }
-        }
-        
-        // Fallback to single connection check
-        try {
-            return connection != null && !connection.isClosed();
-        } catch (SQLException e) {
-            logger.debug("Connection validity check failed, considering uninitialized: {}", e.getMessage());
-            return false;
-        }
+        // Additional validation: check if we have basic database components
+        return currentDatabasePath != null && currentProjectName != null;
     }
     
     /**
