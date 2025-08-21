@@ -170,13 +170,11 @@ public class ConnectionPool {
             // Configure connection for SQLite
             conn.setAutoCommit(true);
             
-            // SQLite-specific optimizations
+            // SQLite-specific minimal settings for stability
             try (java.sql.Statement stmt = conn.createStatement()) {
-                stmt.execute("PRAGMA journal_mode=WAL");
-                stmt.execute("PRAGMA synchronous=FULL");
+                stmt.execute("PRAGMA synchronous=NORMAL");
                 stmt.execute("PRAGMA busy_timeout=10000");
-                stmt.execute("PRAGMA temp_store=MEMORY");
-                stmt.execute("PRAGMA mmap_size=268435456"); // 256MB
+                stmt.execute("PRAGMA foreign_keys=ON");
             }
             
             return conn;

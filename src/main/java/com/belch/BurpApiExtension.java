@@ -145,9 +145,14 @@ public class BurpApiExtension implements BurpExtension {
         startupOperations = new StartupOperations(api, databaseService, config);
         logger.info("[+] StartupOperations initialized - ready for proxy history import");
         
-        // Note: Automatic proxy history import disabled to prevent data interference
-        // Use the /proxy/import-history API endpoint to manually import when needed
-        logger.info("[*] Automatic proxy history import disabled - use API endpoint for manual import");
+        // Re-enable automatic proxy history import on startup
+        logger.info("[*] Starting automatic proxy history import...");
+        try {
+            startupOperations.importExistingProxyHistoryOnly();
+            logger.info("[+] Automatic proxy history import completed successfully");
+        } catch (Exception e) {
+            logger.warn("Automatic proxy history import failed (continuing anyway): {}", e.getMessage());
+        }
     }
     
     /**

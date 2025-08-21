@@ -793,27 +793,7 @@ public class EnhancedTrafficQueue {
         
         lastProjectCheckTime = currentTime;
         
-        try {
-            if (databaseService.checkForProjectChangeAndReinitialize()) {
-                logger.info("🔄 Database switched to new project, clearing queues");
-                
-                int cleared = priorityQueue.size() + deadLetterQueue.size();
-                priorityQueue.clear();
-                deadLetterQueue.clear();
-                totalDropped.addAndGet(cleared);
-                
-                // Reset circuit breaker
-                circuitBreakerOpen = false;
-                consecutiveFailures.set(0);
-                backpressureLevel = BackpressureLevel.NORMAL;
-                
-                if (cleared > 0) {
-                    logger.info("🗑️ Cleared {} queued items from previous project", cleared);
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Failed to check for project change", e);
-        }
+        // REMOVED: Project change checking was causing database instability
     }
     
     /**

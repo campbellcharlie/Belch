@@ -195,13 +195,7 @@ public class SessionRouteRegistrar {
             return false;
         }
         
-        // Check for project changes and reinitialize if needed
-        try {
-            databaseService.checkForProjectChangeAndReinitialize();
-        } catch (Exception e) {
-            logger.warn("Failed to check for project changes: {}", e.getMessage());
-            // Don't fail the request, but log the issue
-        }
+        // REMOVED: Project change checking was causing database instability
         
         return true;
     }

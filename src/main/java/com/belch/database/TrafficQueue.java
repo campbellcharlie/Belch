@@ -392,23 +392,7 @@ public class TrafficQueue {
         
         lastProjectCheckTime = currentTime;
         
-        try {
-            if (databaseService.checkForProjectChangeAndReinitialize()) {
-                logger.info("🔄 Database switched to new project, clearing queue to prevent cross-contamination");
-                
-                // Clear the queue to prevent storing data from the old project 
-                // into the new project's database
-                int cleared = trafficQueue.size();
-                trafficQueue.clear();
-                totalDropped.addAndGet(cleared);
-                
-                if (cleared > 0) {
-                    logger.info("🗑️ Cleared {} queued items from previous project", cleared);
-                }
-            }
-        } catch (Exception e) {
-            logger.error("Failed to check for project change", e);
-        }
+        // REMOVED: Project change checking was causing database instability
     }
     
     /**

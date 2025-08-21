@@ -120,28 +120,9 @@ public class DatabaseService {
                 logger.info("📁 Created database directory {}: {}", parentDir.getAbsolutePath(), created);
             }
             
-            // Check for database corruption BEFORE attempting connection
+            // Skip aggressive integrity check that was causing false positives
             if (dbFile.exists()) {
-                logger.info("🔍 Step 3a: Checking existing database integrity...");
-                try {
-                    Connection testConn = DriverManager.getConnection(dbUrl);
-                    try (Statement testStmt = testConn.createStatement()) {
-                        testStmt.executeQuery("PRAGMA integrity_check(1)").close();
-                        logger.info("✅ Database integrity check passed");
-                    }
-                    testConn.close();
-                } catch (SQLException corruptEx) {
-                    if (corruptEx.getMessage().contains("SQLITE_CORRUPT") || corruptEx.getMessage().contains("malformed")) {
-                        logger.error("🚨 DATABASE CORRUPTION DETECTED: {}", corruptEx.getMessage());
-                        logger.info("🔧 Auto-recovering: Deleting corrupted database file...");
-                        boolean deleted = dbFile.delete();
-                        new java.io.File(currentDatabasePath + "-wal").delete();
-                        new java.io.File(currentDatabasePath + "-shm").delete();
-                        logger.info("🔧 Corrupted database deleted: {}", deleted);
-                    } else {
-                        throw corruptEx;
-                    }
-                }
+                logger.info("🔍 Step 3a: Database file exists, proceeding with connection...");
             }
             
             logger.info("🔍 Step 4: Establishing database connection...");
@@ -151,7 +132,7 @@ public class DatabaseService {
             // Test basic SQL functionality
             try {
                 logger.info("🔍 Step 5: Testing basic SQL functionality...");
-                try (java.sql.Statement testStmt = getConnection().createStatement()) {
+                try (java.sql.Statement testStmt = connection.createStatement()) {
                     testStmt.execute("SELECT 1");
                     logger.info("✅ Basic SQL test successful");
                 }
@@ -309,92 +290,8 @@ public class DatabaseService {
         }
     }
     
-    /**
-     * Checks if the current project has changed and reinitializes the database if needed.
-     * This method should be called periodically or when project changes are suspected.
-     * 
-     * @return true if project changed and database was reinitialized, false if no change
-     */
-    public boolean checkForProjectChangeAndReinitialize() {
-        try {
-            String newProjectName = detectCurrentProject();
-            String newDatabasePath = generateProjectSpecificDatabasePath(newProjectName);
-            
-            // Check if project has changed OR database path has changed OR connection is invalid
-            boolean projectChanged = !newProjectName.equals(currentProjectName);
-            boolean databasePathChanged = !newDatabasePath.equals(currentDatabasePath);
-            boolean connectionInvalid = false;
-            try {
-                connectionInvalid = (connection == null || connection.isClosed());
-            } catch (SQLException sqlEx) {
-                logger.warn("Error checking connection state, assuming invalid: {}", sqlEx.getMessage());
-                connectionInvalid = true;
-            }
-            
-            if (projectChanged || databasePathChanged || connectionInvalid) {
-                if (projectChanged) {
-                    logger.info("🔄 Project change detected: {} -> {}", currentProjectName, newProjectName);
-                }
-                if (databasePathChanged) {
-                    logger.info("🔄 Database path change detected: {} -> {}", currentDatabasePath, newDatabasePath);
-                }
-                if (connectionInvalid) {
-                    logger.info("🔄 Invalid database connection detected, reinitializing...");
-                }
-                logger.info("🔄 Reinitializing database...");
-                
-                // Close current connection pool and connection safely
-                if (connectionPool != null) {
-                    try {
-                        connectionPool.shutdown();
-                        logger.info("📤 Shut down previous connection pool");
-                    } catch (Exception poolEx) {
-                        logger.debug("Error shutting down connection pool: {}", poolEx.getMessage());
-                    }
-                    connectionPool = null;
-                }
-                
-                try {
-                    if (connection != null && !connection.isClosed()) {
-                        connection.close();
-                        logger.info("📤 Closed previous project database connection");
-                    }
-                } catch (SQLException closeEx) {
-                    logger.debug("Error closing connection (expected if connection was dead): {}", closeEx.getMessage());
-                }
-                connection = null;
-                
-                // Reset initialization state
-                initialized.set(false);
-                
-                // Reinitialize with new project - CRITICAL: don't leave in failed state
-                try {
-                    initialize();
-                    logger.info("✅ Successfully switched to new project database");
-                    return true;
-                } catch (Exception e) {
-                    logger.error("❌ Failed to reinitialize database after project change", e);
-                    // CRITICAL: Retry initialization one more time with basic retry logic
-                    try {
-                        Thread.sleep(100); // Brief pause
-                        initialize();
-                        logger.info("✅ Database initialization succeeded on retry");
-                        return true;
-                    } catch (Exception retryEx) {
-                        logger.error("❌ Database initialization failed even on retry", retryEx);
-                        // Leave initialized as false so status reports disconnected
-                        return false;
-                    }
-                }
-            }
-            
-            return false;
-            
-        } catch (Exception e) {
-            logger.error("❌ Failed to check for project change", e);
-            return false;
-        }
-    }
+    // REMOVED: checkForProjectChangeAndReinitialize() function was causing database instability
+    // Project changes will be handled during normal initialization only
     
     /**
      * Gets the current project name.
@@ -415,7 +312,7 @@ public class DatabaseService {
     }
     
     /**
-     * Configures the SQLite connection with optimal settings.
+     * Configures the SQLite connection with stable, minimal settings.
      */
     private void configureConnection() throws SQLException {
         // Use connection directly here, not getConnection() to avoid recursion
@@ -424,37 +321,26 @@ public class DatabaseService {
             connection.setAutoCommit(true);
             logger.info("Database autocommit enabled: {}", connection.getAutoCommit());
             
-            // Configure PRAGMA settings safely with error handling
+            // Configure minimal PRAGMA settings for stability
             try {
-                // Set busy timeout FIRST to handle locking issues
-                stmt.execute("PRAGMA busy_timeout=30000");  // Increased to 30 seconds
-                logger.info("✅ Busy timeout set to 30 seconds");
+                // Set busy timeout for concurrent access
+                stmt.execute("PRAGMA busy_timeout=10000");
+                logger.info("✅ Busy timeout set to 10 seconds");
                 
-                // Set synchronous mode for data integrity BEFORE WAL mode
-                stmt.execute("PRAGMA synchronous=FULL");
-                logger.info("✅ Synchronous mode set to FULL");
-                
-                // Enable WAL mode (this is the most likely to cause corruption if file is already damaged)
-                stmt.execute("PRAGMA journal_mode=WAL");
-                logger.info("✅ WAL mode enabled");
+                // Use NORMAL synchronous mode (not FULL) for better stability
+                stmt.execute("PRAGMA synchronous=NORMAL");
+                logger.info("✅ Synchronous mode set to NORMAL");
                 
                 // Enable foreign key constraints
                 stmt.execute("PRAGMA foreign_keys=ON");
                 logger.info("✅ Foreign keys enabled");
                 
-                // Set cache size (negative value means KB)
-                stmt.execute("PRAGMA cache_size=-10000");
-                logger.info("✅ Cache size set");
-                
-                // Ensure temp store is in memory for performance
-                stmt.execute("PRAGMA temp_store=MEMORY");
-                logger.info("✅ Temp store set to memory");
-                
-                logger.info("SQLite connection configured successfully with enhanced safety");
+                logger.info("SQLite connection configured successfully with stable settings");
                 
             } catch (SQLException pragmaEx) {
                 logger.error("Failed to configure PRAGMA settings: {}", pragmaEx.getMessage());
-                throw pragmaEx;
+                // Don't throw - allow connection to work with defaults
+                logger.warn("Continuing with default SQLite settings");
             }
         }
     }
@@ -1139,8 +1025,7 @@ public class DatabaseService {
      */
     public synchronized Connection getConnection() {
         try {
-            // Check for project changes first, before connection state
-            checkForProjectChangeAndReinitialize();
+            // REMOVED: checkForProjectChangeAndReinitialize() was causing database instability
             
             // Test connection validity - only do expensive test occasionally
             boolean needsReconnect = false;

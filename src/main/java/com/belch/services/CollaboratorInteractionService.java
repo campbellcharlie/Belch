@@ -227,8 +227,9 @@ public class CollaboratorInteractionService {
             }
             
         } catch (SQLException e) {
-            logger.error("Failed to initialize collaborator interaction database", e);
-            throw new RuntimeException("Database initialization failed", e);
+            logger.error("Failed to initialize collaborator interaction database: {}", e.getMessage());
+            logger.warn("Collaborator service will continue with reduced functionality");
+            // Don't throw - allow the extension to continue without collaborator features
         }
     }
     

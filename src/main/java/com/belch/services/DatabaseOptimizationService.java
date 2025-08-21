@@ -399,25 +399,12 @@ public class DatabaseOptimizationService {
         try (Connection conn = databaseService.getConnection();
              Statement stmt = conn.createStatement()) {
             
-            // Enable Write-Ahead Logging (WAL) mode for better concurrency
-            stmt.execute("PRAGMA journal_mode=WAL");
-            
-            // Set synchronous mode to NORMAL for better performance
+            // Basic stability settings only - no aggressive optimizations
             stmt.execute("PRAGMA synchronous=NORMAL");
-            
-            // Increase cache size (10MB)
-            stmt.execute("PRAGMA cache_size=10000");
-            
-            // Enable memory-mapped I/O (256MB)
-            stmt.execute("PRAGMA mmap_size=268435456");
-            
-            // Set temp store to memory
-            stmt.execute("PRAGMA temp_store=memory");
-            
-            // Optimize foreign key checks
+            stmt.execute("PRAGMA busy_timeout=10000");
             stmt.execute("PRAGMA foreign_keys=ON");
             
-            logger.info("Database performance optimizations enabled");
+            logger.info("Database basic optimizations enabled");
         }
     }
     

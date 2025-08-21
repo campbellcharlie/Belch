@@ -79,6 +79,14 @@ public class StartupOperations {
     }
     
     /**
+     * Public method to only import existing proxy history without creating new services.
+     * Use this when services are already initialized elsewhere.
+     */
+    public void importExistingProxyHistoryOnly() {
+        importExistingProxyHistory();
+    }
+    
+    /**
      * Imports existing proxy history and labels it as "imported".
      */
     private void importExistingProxyHistory() {
