@@ -624,13 +624,25 @@ public class DatabaseService {
             return new ArrayList<>();
         }
         
-        StringBuilder sql = new StringBuilder("SELECT id, timestamp, method, url, host, status_code, headers, body, response_headers, response_body, session_tag, content_hash, traffic_source, request_http_version, response_http_version, dns_resolution_time, connection_time, tls_negotiation_time, request_time, response_time, total_time FROM proxy_traffic WHERE 1=1");
+        // Check if we need to join with traffic_meta for tag/comment filtering
+        boolean needsMetaJoin = searchParams.containsKey("tags") || searchParams.containsKey("has_tags") || 
+                               searchParams.containsKey("has_comments") || searchParams.containsKey("comment");
+        
+        StringBuilder sql = new StringBuilder("SELECT ");
+        if (needsMetaJoin) {
+            sql.append("p.id, p.timestamp, p.method, p.url, p.host, p.status_code, p.headers, p.body, p.response_headers, p.response_body, p.session_tag, p.content_hash, p.traffic_source, p.request_http_version, p.response_http_version, p.dns_resolution_time, p.connection_time, p.tls_negotiation_time, p.request_time, p.response_time, p.total_time, tm.tags, tm.comment ");
+            sql.append("FROM proxy_traffic p LEFT JOIN traffic_meta tm ON p.id = tm.id WHERE 1=1");
+        } else {
+            sql.append("id, timestamp, method, url, host, status_code, headers, body, response_headers, response_body, session_tag, content_hash, traffic_source, request_http_version, response_http_version, dns_resolution_time, connection_time, tls_negotiation_time, request_time, response_time, total_time ");
+            sql.append("FROM proxy_traffic WHERE 1=1");
+        }
         List<Object> params = new ArrayList<>();
         
-        // Determine case sensitivity
+        // Determine case sensitivity and table aliases
         boolean caseInsensitive = Boolean.parseBoolean(searchParams.getOrDefault("case_insensitive", "false"));
-        String likeOperator = caseInsensitive ? " AND LOWER(url) LIKE LOWER(?)" : " AND url LIKE ?";
-        String hostLikeOperator = caseInsensitive ? " AND LOWER(host) LIKE LOWER(?)" : " AND host LIKE ?";
+        String tablePrefix = needsMetaJoin ? "p." : "";
+        String likeOperator = caseInsensitive ? " AND LOWER(" + tablePrefix + "url) LIKE LOWER(?)" : " AND " + tablePrefix + "url LIKE ?";
+        String hostLikeOperator = caseInsensitive ? " AND LOWER(" + tablePrefix + "host) LIKE LOWER(?)" : " AND " + tablePrefix + "host LIKE ?";
         
         // Add search filters
         if (searchParams.containsKey("url")) {
@@ -694,6 +706,46 @@ public class DatabaseService {
         
         // Add incremental update support with "since" parameter
         addTimestampFiltering(sql, params, searchParams);
+        
+        // Add tag and comment filtering (only when metadata join is available)
+        if (needsMetaJoin) {
+            if (searchParams.containsKey("tags")) {
+                // Support comma-separated tag search: "authentication,critical" 
+                String tags = searchParams.get("tags");
+                if (tags.contains(",")) {
+                    // Multiple tags - check if ANY of them match
+                    String[] tagArray = tags.split(",");
+                    sql.append(" AND (");
+                    for (int i = 0; i < tagArray.length; i++) {
+                        if (i > 0) sql.append(" OR ");
+                        sql.append("tm.tags LIKE ?");
+                        params.add("%" + tagArray[i].trim() + "%");
+                    }
+                    sql.append(")");
+                } else {
+                    // Single tag
+                    sql.append(" AND tm.tags LIKE ?");
+                    params.add("%" + tags + "%");
+                }
+            }
+            
+            if (searchParams.containsKey("has_tags") && "true".equalsIgnoreCase(searchParams.get("has_tags"))) {
+                sql.append(" AND tm.tags IS NOT NULL AND tm.tags != ''");
+            }
+            
+            if (searchParams.containsKey("has_comments") && "true".equalsIgnoreCase(searchParams.get("has_comments"))) {
+                sql.append(" AND tm.comment IS NOT NULL AND tm.comment != ''");
+            }
+            
+            if (searchParams.containsKey("comment")) {
+                if (caseInsensitive) {
+                    sql.append(" AND LOWER(tm.comment) LIKE LOWER(?)");
+                } else {
+                    sql.append(" AND tm.comment LIKE ?");
+                }
+                params.add("%" + searchParams.get("comment") + "%");
+            }
+        }
         
         // Add ordering - support sort and order parameters
         String sortColumn = searchParams.getOrDefault("sort", "timestamp");
@@ -811,6 +863,18 @@ public class DatabaseService {
                     record.put("request_time", rs.getObject("request_time"));
                     record.put("response_time", rs.getObject("response_time"));
                     record.put("total_time", rs.getObject("total_time"));
+                    
+                    // Add tags and comments if metadata join was used
+                    if (needsMetaJoin) {
+                        try {
+                            record.put("tags", rs.getString("tags"));
+                            record.put("comment", rs.getString("comment"));
+                        } catch (SQLException e) {
+                            // These fields might not exist if no JOIN occurred
+                            record.put("tags", null);
+                            record.put("comment", null);
+                        }
+                    }
                     
                     results.add(record);
                 }

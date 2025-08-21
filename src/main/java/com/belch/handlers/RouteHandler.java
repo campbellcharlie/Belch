@@ -1532,6 +1532,221 @@ public class RouteHandler {
             }
         });
         
+        // Get all tagged records
+        app.get("/proxy/tags", ctx -> {
+            try {
+                String sessionTag = ctx.queryParam("session_tag");
+                String sql = "SELECT tm.id, tm.url, tm.method, tm.host, tm.tags, tm.timestamp, tm.session_tag " +
+                           "FROM traffic_meta tm WHERE tm.tags IS NOT NULL AND tm.tags != '' ";
+                
+                if (sessionTag != null) {
+                    sql += "AND tm.session_tag = ? ";
+                }
+                sql += "ORDER BY tm.timestamp DESC";
+                
+                List<Map<String, Object>> taggedRecords = new ArrayList<>();
+                try (Connection conn = databaseService.getConnection();
+                     PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    
+                    if (sessionTag != null) {
+                        stmt.setString(1, sessionTag);
+                    }
+                    
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> record = new HashMap<>();
+                            record.put("id", rs.getLong("id"));
+                            record.put("url", rs.getString("url"));
+                            record.put("method", rs.getString("method"));
+                            record.put("host", rs.getString("host"));
+                            record.put("tags", rs.getString("tags"));
+                            record.put("timestamp", rs.getLong("timestamp"));
+                            record.put("session_tag", rs.getString("session_tag"));
+                            taggedRecords.add(record);
+                        }
+                    }
+                }
+                
+                ctx.json(Map.of(
+                    "tagged_records", taggedRecords,
+                    "count", taggedRecords.size(),
+                    "session_filter", sessionTag != null ? sessionTag : "all",
+                    "timestamp", System.currentTimeMillis()
+                ));
+                
+            } catch (Exception e) {
+                logger.error("Failed to retrieve tagged records", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to retrieve tagged records",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Get all commented records
+        app.get("/proxy/comments", ctx -> {
+            try {
+                String sessionTag = ctx.queryParam("session_tag");
+                String sql = "SELECT tm.id, tm.url, tm.method, tm.host, tm.comment, tm.timestamp, tm.session_tag " +
+                           "FROM traffic_meta tm WHERE tm.comment IS NOT NULL AND tm.comment != '' ";
+                
+                if (sessionTag != null) {
+                    sql += "AND tm.session_tag = ? ";
+                }
+                sql += "ORDER BY tm.timestamp DESC";
+                
+                List<Map<String, Object>> commentedRecords = new ArrayList<>();
+                try (Connection conn = databaseService.getConnection();
+                     PreparedStatement stmt = conn.prepareStatement(sql)) {
+                    
+                    if (sessionTag != null) {
+                        stmt.setString(1, sessionTag);
+                    }
+                    
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> record = new HashMap<>();
+                            record.put("id", rs.getLong("id"));
+                            record.put("url", rs.getString("url"));
+                            record.put("method", rs.getString("method"));
+                            record.put("host", rs.getString("host"));
+                            record.put("comment", rs.getString("comment"));
+                            record.put("timestamp", rs.getLong("timestamp"));
+                            record.put("session_tag", rs.getString("session_tag"));
+                            commentedRecords.add(record);
+                        }
+                    }
+                }
+                
+                ctx.json(Map.of(
+                    "commented_records", commentedRecords,
+                    "count", commentedRecords.size(),
+                    "session_filter", sessionTag != null ? sessionTag : "all",
+                    "timestamp", System.currentTimeMillis()
+                ));
+                
+            } catch (Exception e) {
+                logger.error("Failed to retrieve commented records", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to retrieve commented records",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Search tagged/commented records (simpler dedicated endpoint)
+        app.get("/proxy/search/metadata", ctx -> {
+            try {
+                String tags = ctx.queryParam("tags");
+                String comment = ctx.queryParam("comment");
+                String hasTagsParam = ctx.queryParam("has_tags");
+                String hasCommentsParam = ctx.queryParam("has_comments");
+                String sessionTag = ctx.queryParam("session_tag");
+                String limitParam = ctx.queryParam("limit");
+                int limit = Math.min(Integer.parseInt(limitParam != null ? limitParam : "20"), 1000);
+                
+                StringBuilder sql = new StringBuilder(
+                    "SELECT p.id, p.timestamp, p.method, p.url, p.host, p.status_code, " +
+                    "p.headers, p.body, p.response_headers, p.response_body, p.session_tag, " +
+                    "tm.tags, tm.comment " +
+                    "FROM proxy_traffic p " +
+                    "INNER JOIN traffic_meta tm ON p.id = tm.id " +
+                    "WHERE 1=1 "
+                );
+                
+                List<Object> params = new ArrayList<>();
+                
+                // Add filters
+                if (tags != null && !tags.isEmpty()) {
+                    if (tags.contains(",")) {
+                        String[] tagArray = tags.split(",");
+                        sql.append("AND (");
+                        for (int i = 0; i < tagArray.length; i++) {
+                            if (i > 0) sql.append(" OR ");
+                            sql.append("tm.tags LIKE ?");
+                            params.add("%" + tagArray[i].trim() + "%");
+                        }
+                        sql.append(") ");
+                    } else {
+                        sql.append("AND tm.tags LIKE ? ");
+                        params.add("%" + tags + "%");
+                    }
+                }
+                
+                if ("true".equalsIgnoreCase(hasTagsParam)) {
+                    sql.append("AND tm.tags IS NOT NULL AND tm.tags != '' ");
+                }
+                
+                if ("true".equalsIgnoreCase(hasCommentsParam)) {
+                    sql.append("AND tm.comment IS NOT NULL AND tm.comment != '' ");
+                }
+                
+                if (comment != null && !comment.isEmpty()) {
+                    sql.append("AND tm.comment LIKE ? ");
+                    params.add("%" + comment + "%");
+                }
+                
+                if (sessionTag != null && !sessionTag.isEmpty()) {
+                    sql.append("AND p.session_tag = ? ");
+                    params.add(sessionTag);
+                }
+                
+                sql.append("ORDER BY p.timestamp DESC LIMIT ?");
+                params.add(limit);
+                
+                List<Map<String, Object>> results = new ArrayList<>();
+                try (Connection conn = databaseService.getConnection();
+                     PreparedStatement stmt = conn.prepareStatement(sql.toString())) {
+                    
+                    for (int i = 0; i < params.size(); i++) {
+                        stmt.setObject(i + 1, params.get(i));
+                    }
+                    
+                    try (ResultSet rs = stmt.executeQuery()) {
+                        while (rs.next()) {
+                            Map<String, Object> record = new HashMap<>();
+                            record.put("id", rs.getLong("id"));
+                            record.put("timestamp", rs.getLong("timestamp"));
+                            record.put("method", rs.getString("method"));
+                            record.put("url", rs.getString("url"));
+                            record.put("host", rs.getString("host"));
+                            record.put("status_code", rs.getInt("status_code"));
+                            record.put("headers", rs.getString("headers"));
+                            record.put("body", rs.getString("body"));
+                            record.put("response_headers", rs.getString("response_headers"));
+                            record.put("response_body", rs.getString("response_body"));
+                            record.put("session_tag", rs.getString("session_tag"));
+                            record.put("tags", rs.getString("tags"));
+                            record.put("comment", rs.getString("comment"));
+                            results.add(record);
+                        }
+                    }
+                }
+                
+                ctx.json(Map.of(
+                    "results", results,
+                    "count", results.size(),
+                    "filters", Map.of(
+                        "tags", tags != null ? tags : "",
+                        "comment", comment != null ? comment : "",
+                        "has_tags", hasTagsParam != null ? hasTagsParam : "",
+                        "has_comments", hasCommentsParam != null ? hasCommentsParam : "",
+                        "session_tag", sessionTag != null ? sessionTag : "",
+                        "limit", limit
+                    ),
+                    "endpoint", "metadata_search",
+                    "timestamp", System.currentTimeMillis()
+                ));
+                
+            } catch (Exception e) {
+                logger.error("Failed to search metadata", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to search tagged/commented records",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
         // Phase 4: Delete/purge endpoint
         app.delete("/proxy/delete", ctx -> {
             try {
@@ -2656,8 +2871,9 @@ public class RouteHandler {
             Map.of("method", "GET", "path", "/database/stats", "description", "Database performance statistics and optimization recommendations"),
             
             // Proxy traffic management
-            Map.of("method", "GET", "path", "/proxy/search", "description", "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version."),
+            Map.of("method", "GET", "path", "/proxy/search", "description", "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, tags, has_tags, has_comments, comment, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version."),
             Map.of("method", "GET", "path", "/proxy/search/download", "description", "Download search results as JSON or CSV (format=json|csv)"),
+            Map.of("method", "GET", "path", "/proxy/search/metadata", "description", "Search tagged and commented records with metadata filters (tags, has_tags, has_comments, comment, session_tag, limit)"),
             Map.of("method", "GET", "path", "/proxy/history", "description", "Get proxy history with optimized scope filtering and performance enhancements (limit, offset, isInScope, notInScope)"),
             Map.of("method", "POST", "path", "/proxy/send", "description", "Send raw HTTP request and capture response (requires: method, url; optional: headers, body, session_tag)"),
             Map.of("method", "POST", "path", "/proxy/upload", "description", "Upload HAR files or raw HTTP logs for storage (supports JSON HAR format and plain text HTTP logs)"),
@@ -2671,6 +2887,8 @@ public class RouteHandler {
             // Phase 10: Enhanced Proxy Features
             Map.of("method", "POST", "path", "/proxy/tag", "description", "Tag traffic records with analyst labels (requires: request_id, tags)"),
             Map.of("method", "POST", "path", "/proxy/comment", "description", "Add comments to traffic records (requires: request_id, comment)"),
+            Map.of("method", "GET", "path", "/proxy/tags", "description", "Get all tagged traffic records (optional: session_tag filter)"),
+            Map.of("method", "GET", "path", "/proxy/comments", "description", "Get all commented traffic records (optional: session_tag filter)"),
             Map.of("method", "POST", "path", "/proxy/replay", "description", "Replay requests by ID with header/body overrides and lineage tracking (requires: request_ids)"),
             Map.of("method", "GET", "path", "/proxy/replay/lineage/{id}", "description", "Track replay genealogy for forensic analysis (requires: id path parameter)"),
             Map.of("method", "GET", "path", "/proxy/search/request-body", "description", "FTS5-powered full-text search in request bodies (requires: q query parameter)"),
@@ -3054,6 +3272,12 @@ public class RouteHandler {
         if (ctx.queryParam("host_limit") != null) searchParams.put("host_limit", ctx.queryParam("host_limit"));
         if (ctx.queryParam("all_hosts") != null) searchParams.put("all_hosts", ctx.queryParam("all_hosts"));
         if (ctx.queryParam("since") != null) searchParams.put("since", ctx.queryParam("since"));
+        
+        // Tag and comment filtering
+        if (ctx.queryParam("tags") != null) searchParams.put("tags", ctx.queryParam("tags"));
+        if (ctx.queryParam("has_tags") != null) searchParams.put("has_tags", ctx.queryParam("has_tags"));
+        if (ctx.queryParam("has_comments") != null) searchParams.put("has_comments", ctx.queryParam("has_comments"));
+        if (ctx.queryParam("comment") != null) searchParams.put("comment", ctx.queryParam("comment"));
         
         return searchParams;
     }
