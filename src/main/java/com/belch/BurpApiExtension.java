@@ -28,13 +28,13 @@ import java.util.concurrent.CompletableFuture;
  * STRATEGY 2: Proxy history import for save file scenarios (only proxy data persists in saves)
  * 
  * @author Charlie Campbell
- * @version 1.0.0
+ * @version 1.0.1
  */
 public class BurpApiExtension implements BurpExtension {
     
     private static final Logger logger = LoggerFactory.getLogger(BurpApiExtension.class);
     private static final String EXTENSION_NAME = "Belch";
-    private static final String EXTENSION_VERSION = "1.0.0";
+    private static final String EXTENSION_VERSION = "1.0.1";
     
     private MontoyaApi api;
     private Javalin javalinApp;

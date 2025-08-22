@@ -7,11 +7,11 @@
 
     <groupId>com.belch</groupId>
     <artifactId>belch</artifactId>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <packaging>jar</packaging>
 
     <name>Belch - Burp Suite REST API</name>
-    <description>Belch v1.0 - A comprehensive REST API extension for Burp Suite using the Montoya API</description>
+    <description>Belch v1.0.1 - A comprehensive REST API extension for Burp Suite using the Montoya API</description>
 
     <properties>
         <maven.compiler.source>17</maven.compiler.source>
