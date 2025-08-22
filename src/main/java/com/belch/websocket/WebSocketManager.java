@@ -536,7 +536,9 @@ public class WebSocketManager {
         Map<String, Long> sessionCounts = new HashMap<>();
         for (WebSocketConnection conn : connections.values()) {
             String sessionTag = conn.getSessionTag();
-            sessionCounts.put(sessionTag, sessionCounts.getOrDefault(sessionTag, 0L) + 1);
+            // Handle null session tags properly for JSON serialization
+            String sessionKey = (sessionTag != null) ? sessionTag : "no_session";
+            sessionCounts.put(sessionKey, sessionCounts.getOrDefault(sessionKey, 0L) + 1);
         }
         stats.put("connections_by_session", sessionCounts);
         stats.put("last_activity", lastActivity.get());

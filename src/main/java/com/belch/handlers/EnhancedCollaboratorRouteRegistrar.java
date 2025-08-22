@@ -114,7 +114,11 @@ public class EnhancedCollaboratorRouteRegistrar {
             boolean storeInDb = Boolean.parseBoolean(ctx.queryParam("store_in_db") != null ? ctx.queryParam("store_in_db") : "true");
             
             // Restore client and get interactions
-            SecretKey key = SecretKey.secretKey(clientSecret);
+            // Javalin automatically URL-decodes query parameters, so use clientSecret directly
+            // Only clean up any remaining invalid characters without double-decoding
+            String cleanedClientSecret = clientSecret.trim();
+            
+            SecretKey key = SecretKey.secretKey(cleanedClientSecret);
             CollaboratorClient client = api.collaborator().restoreClient(key);
             List<Interaction> interactions = client.getAllInteractions();
             
@@ -336,19 +340,10 @@ public class EnhancedCollaboratorRouteRegistrar {
             String sessionTag = ctx.queryParam("session_tag");
             String payloadType = ctx.queryParam("type");
             
-            // This would query the database for payload tracking information
-            // Implementation would depend on specific database queries
+            // Get payload tracking information from the interaction service
+            Map<String, Object> trackingData = interactionService.getPayloadTracking(sessionTag, payloadType);
             
-            Map<String, Object> response = new HashMap<>();
-            response.put("status", "success");
-            response.put("message", "Payload tracking data");
-            response.put("filters", Map.of(
-                "session_tag", sessionTag,
-                "payload_type", payloadType
-            ));
-            response.put("note", "Detailed tracking implementation would query collaborator_payloads table");
-            
-            ctx.json(response);
+            ctx.json(trackingData);
             
         } catch (Exception e) {
             logger.error("Error getting payload tracking", e);
@@ -574,19 +569,23 @@ public class EnhancedCollaboratorRouteRegistrar {
             String sessionTag = ctx.queryParam("session_tag");
             String pattern = ctx.queryParam("pattern");
             
-            // This would implement database search across stored interactions
-            Map<String, Object> response = new HashMap<>();
-            response.put("status", "success");
-            response.put("query", query);
-            response.put("filters", Map.of(
-                "type", type,
-                "session_tag", sessionTag,
-                "pattern", pattern
-            ));
-            response.put("note", "Search would query collaborator_interactions and related tables");
-            response.put("timestamp", System.currentTimeMillis());
+            // Parse limit parameter
+            int limit = 50; // default
+            try {
+                String limitParam = ctx.queryParam("limit");
+                if (limitParam != null && !limitParam.isEmpty()) {
+                    limit = Integer.parseInt(limitParam);
+                    // Cap limit to prevent excessive results
+                    limit = Math.min(limit, 1000);
+                }
+            } catch (NumberFormatException e) {
+                // Use default limit if parsing fails
+            }
             
-            ctx.json(response);
+            // Perform search using the interaction service
+            Map<String, Object> searchResults = interactionService.searchInteractions(query, type, sessionTag, pattern, limit);
+            
+            ctx.json(searchResults);
             
         } catch (Exception e) {
             logger.error("Error searching interactions", e);

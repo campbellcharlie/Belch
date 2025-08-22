@@ -42,14 +42,6 @@ public class QueueMonitoringRouteRegistrar {
         app.get("/queue/metrics", this::getQueueMetrics);
         app.get("/queue/health", this::getQueueHealth);
         
-        // Detailed monitoring
-        app.get("/queue/backpressure", this::getBackpressureStatus);
-        app.get("/queue/dead-letter", this::getDeadLetterQueueStatus);
-        
-        // Administrative endpoints
-        app.post("/queue/reset-circuit-breaker", this::resetCircuitBreaker);
-        app.post("/queue/clear-dead-letter", this::clearDeadLetterQueue);
-        app.get("/queue/priority-distribution", this::getPriorityDistribution);
         
         // Historical metrics (if available)
         app.get("/queue/metrics/history", this::getMetricsHistory);
@@ -105,45 +97,6 @@ public class QueueMonitoringRouteRegistrar {
     }
     
     
-    /**
-     * GET /queue/backpressure - Get backpressure status and recommendations
-     */
-    private void getBackpressureStatus(Context ctx) {
-        try {
-            Map<String, Object> metrics = trafficQueue.getEnhancedMetrics();
-            String backpressureLevel = (String) metrics.get("backpressure_level");
-            double utilization = (Double) metrics.get("queue_utilization_percent");
-            
-            List<String> recommendations = generateBackpressureRecommendations(backpressureLevel, utilization);
-            
-            Map<String, Object> backpressure = Map.of(
-                "level", backpressureLevel,
-                "queue_utilization_percent", utilization,
-                "circuit_breaker_open", metrics.get("circuit_breaker_open"),
-                "consecutive_failures", metrics.get("consecutive_failures"),
-                "recommendations", recommendations,
-                "thresholds", Map.of(
-                    "high_pressure_threshold", 80.0,
-                    "critical_pressure_threshold", 95.0,
-                    "circuit_breaker_failure_threshold", 10
-                )
-            );
-            
-            ctx.status(200)
-               .contentType("application/json")
-               .result(objectMapper.writeValueAsString(Map.of(
-                   "status", "success",
-                   "backpressure", backpressure,
-                   "timestamp", System.currentTimeMillis()
-               )));
-               
-        } catch (Exception e) {
-            logger.error("Error getting backpressure status", e);
-            ctx.status(500)
-               .contentType("application/json")
-               .result("{\"status\":\"error\",\"message\":\"Failed to get backpressure status\"}");
-        }
-    }
     
     /**
      * GET /queue/dead-letter - Get dead letter queue status

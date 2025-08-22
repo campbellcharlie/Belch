@@ -710,6 +710,317 @@ public class CollaboratorInteractionService {
     }
     
     /**
+     * Search collaborator interactions with advanced filters
+     */
+    public Map<String, Object> searchInteractions(String query, String type, String sessionTag, String pattern, int limit) {
+        Map<String, Object> result = new HashMap<>();
+        
+        try (Connection conn = databaseService.getConnection()) {
+            StringBuilder sqlQuery = new StringBuilder("""
+                SELECT 
+                    ci.id,
+                    ci.interaction_id,
+                    ci.interaction_type,
+                    ci.session_tag,
+                    ci.created_at,
+                    cdd.query as dns_query,
+                    cdd.query_type as dns_query_type,
+                    chd.request_method as http_method,
+                    chd.request_url as http_url,
+                    chd.request_headers as http_headers,
+                    chd.request_body as http_body,
+                    csd.protocol as smtp_protocol,
+                    csd.message_content as smtp_conversation,
+                    cpm.pattern_name,
+                    cpm.match_details
+                FROM collaborator_interactions ci
+                LEFT JOIN collaborator_dns_details cdd ON ci.interaction_id = cdd.interaction_id
+                LEFT JOIN collaborator_http_details chd ON ci.interaction_id = chd.interaction_id
+                LEFT JOIN collaborator_smtp_details csd ON ci.interaction_id = csd.interaction_id
+                LEFT JOIN collaborator_pattern_matches cpm ON ci.interaction_id = cpm.interaction_id
+                WHERE 1=1
+            """);
+            
+            List<Object> params = new ArrayList<>();
+            
+            // Add search filters
+            if (query != null && !query.trim().isEmpty()) {
+                sqlQuery.append("""
+                    AND (cdd.query LIKE ? 
+                         OR chd.request_url LIKE ? 
+                         OR chd.request_headers LIKE ?
+                         OR chd.request_body LIKE ?
+                         OR csd.message_content LIKE ?
+                         OR ci.interaction_id LIKE ?)
+                """);
+                String searchTerm = "%" + query.trim() + "%";
+                for (int i = 0; i < 6; i++) {
+                    params.add(searchTerm);
+                }
+            }
+            
+            if (type != null && !type.isEmpty()) {
+                sqlQuery.append(" AND ci.interaction_type = ?");
+                params.add(type);
+            }
+            
+            if (sessionTag != null && !sessionTag.isEmpty()) {
+                sqlQuery.append(" AND ci.session_tag = ?");
+                params.add(sessionTag);
+            }
+            
+            if (pattern != null && !pattern.isEmpty()) {
+                sqlQuery.append(" AND cpm.pattern_name = ?");
+                params.add(pattern);
+            }
+            
+            sqlQuery.append(" ORDER BY ci.created_at DESC");
+            
+            if (limit > 0) {
+                sqlQuery.append(" LIMIT ?");
+                params.add(limit);
+            } else {
+                sqlQuery.append(" LIMIT 50"); // Default limit
+            }
+            
+            PreparedStatement stmt = conn.prepareStatement(sqlQuery.toString());
+            for (int i = 0; i < params.size(); i++) {
+                stmt.setObject(i + 1, params.get(i));
+            }
+            
+            ResultSet rs = stmt.executeQuery();
+            List<Map<String, Object>> interactions = new ArrayList<>();
+            
+            while (rs.next()) {
+                Map<String, Object> interaction = new HashMap<>();
+                interaction.put("id", rs.getLong("id"));
+                interaction.put("interaction_id", rs.getString("interaction_id"));
+                interaction.put("type", rs.getString("interaction_type"));
+                interaction.put("session_tag", rs.getString("session_tag"));
+                interaction.put("created_at", rs.getTimestamp("created_at"));
+                
+                // Add type-specific data
+                String interactionType = rs.getString("interaction_type");
+                if ("DNS".equals(interactionType)) {
+                    interaction.put("dns_query", rs.getString("dns_query"));
+                    interaction.put("dns_query_type", rs.getString("dns_query_type"));
+                } else if ("HTTP".equals(interactionType)) {
+                    interaction.put("http_method", rs.getString("http_method"));
+                    interaction.put("http_url", rs.getString("http_url"));
+                    interaction.put("http_headers", rs.getString("http_headers"));
+                    interaction.put("http_body", rs.getString("http_body"));
+                } else if ("SMTP".equals(interactionType)) {
+                    interaction.put("smtp_protocol", rs.getString("smtp_protocol"));
+                    interaction.put("smtp_conversation", rs.getString("smtp_conversation"));
+                }
+                
+                interaction.put("custom_data", rs.getString("custom_data"));
+                
+                // Add pattern match info if available
+                String patternName = rs.getString("pattern_name");
+                if (patternName != null) {
+                    interaction.put("pattern_matched", patternName);
+                    interaction.put("match_details", rs.getString("match_details"));
+                }
+                
+                interactions.add(interaction);
+            }
+            
+            // Get count statistics
+            StringBuilder countQuery = new StringBuilder("""
+                SELECT 
+                    COUNT(*) as total_matches,
+                    ci.interaction_type,
+                    COUNT(*) as type_count
+                FROM collaborator_interactions ci
+                LEFT JOIN collaborator_dns_details cdd ON ci.interaction_id = cdd.interaction_id
+                LEFT JOIN collaborator_http_details chd ON ci.interaction_id = chd.interaction_id
+                LEFT JOIN collaborator_smtp_details csd ON ci.interaction_id = csd.interaction_id
+                LEFT JOIN collaborator_pattern_matches cpm ON ci.interaction_id = cpm.interaction_id
+                WHERE 1=1
+            """);
+            
+            // Apply same filters for counting
+            List<Object> countParams = new ArrayList<>();
+            
+            if (query != null && !query.trim().isEmpty()) {
+                countQuery.append("""
+                    AND (cdd.query LIKE ? 
+                         OR chd.request_url LIKE ? 
+                         OR chd.request_headers LIKE ?
+                         OR chd.request_body LIKE ?
+                         OR csd.message_content LIKE ?
+                         OR ci.interaction_id LIKE ?)
+                """);
+                String searchTerm = "%" + query.trim() + "%";
+                for (int i = 0; i < 6; i++) {
+                    countParams.add(searchTerm);
+                }
+            }
+            
+            if (type != null && !type.isEmpty()) {
+                countQuery.append(" AND ci.interaction_type = ?");
+                countParams.add(type);
+            }
+            
+            if (sessionTag != null && !sessionTag.isEmpty()) {
+                countQuery.append(" AND ci.session_tag = ?");
+                countParams.add(sessionTag);
+            }
+            
+            if (pattern != null && !pattern.isEmpty()) {
+                countQuery.append(" AND cpm.pattern_name = ?");
+                countParams.add(pattern);
+            }
+            
+            countQuery.append(" GROUP BY ci.interaction_type");
+            
+            PreparedStatement countStmt = conn.prepareStatement(countQuery.toString());
+            for (int i = 0; i < countParams.size(); i++) {
+                countStmt.setObject(i + 1, countParams.get(i));
+            }
+            
+            ResultSet countRs = countStmt.executeQuery();
+            Map<String, Object> statistics = new HashMap<>();
+            int totalMatches = 0;
+            
+            while (countRs.next()) {
+                String interactionType = countRs.getString("interaction_type");
+                int typeCount = countRs.getInt("type_count");
+                statistics.put(interactionType.toLowerCase() + "_count", typeCount);
+                totalMatches += typeCount;
+            }
+            
+            statistics.put("total_matches", totalMatches);
+            statistics.put("returned_results", interactions.size());
+            
+            result.put("interactions", interactions);
+            result.put("statistics", statistics);
+            result.put("filters", Map.of(
+                "query", query != null ? query : "",
+                "type", type != null ? type : "all",
+                "session_tag", sessionTag != null ? sessionTag : "all",
+                "pattern", pattern != null ? pattern : "all",
+                "limit", limit > 0 ? limit : 50
+            ));
+            result.put("timestamp", System.currentTimeMillis());
+            result.put("status", "success");
+            
+        } catch (SQLException e) {
+            logger.error("Database error in searchInteractions", e);
+            result.put("error", "Database error: " + e.getMessage());
+            result.put("status", "error");
+        }
+        
+        return result;
+    }
+    
+    /**
+     * Get payload tracking information with statistics and interaction counts
+     */
+    public Map<String, Object> getPayloadTracking(String sessionTag, String payloadType) {
+        Map<String, Object> result = new HashMap<>();
+        
+        try (Connection conn = databaseService.getConnection()) {
+            // Base query for payload tracking
+            StringBuilder query = new StringBuilder("""
+                SELECT 
+                    cp.id,
+                    cp.payload_text,
+                    cp.payload_type,
+                    cp.session_tag,
+                    cp.custom_data,
+                    cp.server_address,
+                    cp.created_at,
+                    COUNT(ci.id) as interaction_count,
+                    MAX(ci.created_at) as last_interaction
+                FROM collaborator_payloads cp
+                LEFT JOIN collaborator_interactions ci ON cp.interaction_id_generated = ci.interaction_id
+                WHERE 1=1
+            """);
+            
+            List<Object> params = new ArrayList<>();
+            
+            // Add filters
+            if (sessionTag != null && !sessionTag.isEmpty()) {
+                query.append(" AND cp.session_tag = ?");
+                params.add(sessionTag);
+            }
+            
+            if (payloadType != null && !payloadType.isEmpty()) {
+                query.append(" AND cp.payload_type = ?");
+                params.add(payloadType);
+            }
+            
+            query.append(" GROUP BY cp.id ORDER BY cp.created_at DESC LIMIT 100");
+            
+            PreparedStatement stmt = conn.prepareStatement(query.toString());
+            for (int i = 0; i < params.size(); i++) {
+                stmt.setObject(i + 1, params.get(i));
+            }
+            
+            ResultSet rs = stmt.executeQuery();
+            List<Map<String, Object>> payloads = new ArrayList<>();
+            int totalPayloads = 0;
+            int totalInteractions = 0;
+            
+            while (rs.next()) {
+                Map<String, Object> payload = new HashMap<>();
+                payload.put("id", rs.getLong("id"));
+                payload.put("payload_text", rs.getString("payload_text"));
+                payload.put("payload_type", rs.getString("payload_type"));
+                payload.put("session_tag", rs.getString("session_tag"));
+                payload.put("custom_data", rs.getString("custom_data"));
+                payload.put("server_address", rs.getString("server_address"));
+                payload.put("created_at", rs.getTimestamp("created_at"));
+                payload.put("interaction_count", rs.getInt("interaction_count"));
+                payload.put("last_interaction", rs.getTimestamp("last_interaction"));
+                
+                payloads.add(payload);
+                totalPayloads++;
+                totalInteractions += rs.getInt("interaction_count");
+            }
+            
+            // Get overall statistics
+            PreparedStatement statsStmt = conn.prepareStatement("""
+                SELECT 
+                    COUNT(DISTINCT cp.id) as total_payloads,
+                    COUNT(DISTINCT ci.id) as total_interactions,
+                    COUNT(DISTINCT cp.session_tag) as unique_sessions,
+                    COUNT(DISTINCT cp.payload_type) as payload_types
+                FROM collaborator_payloads cp
+                LEFT JOIN collaborator_interactions ci ON cp.interaction_id_generated = ci.interaction_id
+            """);
+            
+            ResultSet statsRs = statsStmt.executeQuery();
+            Map<String, Object> statistics = new HashMap<>();
+            
+            if (statsRs.next()) {
+                statistics.put("total_payloads", statsRs.getInt("total_payloads"));
+                statistics.put("total_interactions", statsRs.getInt("total_interactions"));
+                statistics.put("unique_sessions", statsRs.getInt("unique_sessions"));
+                statistics.put("payload_types", statsRs.getInt("payload_types"));
+            }
+            
+            result.put("payloads", payloads);
+            result.put("statistics", statistics);
+            result.put("filters", Map.of(
+                "session_tag", sessionTag != null ? sessionTag : "all",
+                "payload_type", payloadType != null ? payloadType : "all"
+            ));
+            result.put("timestamp", System.currentTimeMillis());
+            result.put("status", "success");
+            
+        } catch (SQLException e) {
+            logger.error("Database error in getPayloadTracking", e);
+            result.put("error", "Database error: " + e.getMessage());
+            result.put("status", "error");
+        }
+        
+        return result;
+    }
+    
+    /**
      * Shutdown the service
      */
     public void shutdown() {

@@ -16,6 +16,7 @@ import com.belch.database.TrafficQueue;
 import com.belch.services.ScanTaskManager;
 import com.belch.services.BCheckService;
 import com.belch.services.QueueMetricsCollectionService;
+import com.belch.services.ProxyInterceptionService;
 import com.belch.handlers.SessionRouteRegistrar;
 import com.belch.handlers.CollaboratorRouteRegistrar;
 import com.belch.utils.CurlGenerator;
@@ -804,14 +805,59 @@ public class RouteHandler {
         // WebSocket endpoints
         app.get("/ws/stats", ctx -> {
             try {
+                logger.info("WebSocket stats endpoint called");
                 Map<String, Object> stats = webSocketManager.getConnectionStats();
-                ctx.json(stats);
-                logger.info("WebSocket stats requested: {} connections", stats.get("total_connections"));
+                logger.info("WebSocket stats retrieved successfully: {}", stats);
+                
+                // Create a completely safe response using primitive types only
+                Map<String, Object> safeResponse = new HashMap<>();
+                safeResponse.put("total_connections", 0);
+                safeResponse.put("active_connections", 0);
+                safeResponse.put("status", "healthy");
+                safeResponse.put("timestamp", System.currentTimeMillis());
+                
+                // Try to get actual values safely
+                if (stats != null) {
+                    try {
+                        Object totalConn = stats.get("total_connections");
+                        if (totalConn instanceof Number) {
+                            safeResponse.put("total_connections", ((Number) totalConn).intValue());
+                        }
+                        
+                        Object activeConn = stats.get("active_connections");
+                        if (activeConn instanceof Number) {
+                            safeResponse.put("active_connections", ((Number) activeConn).longValue());
+                        }
+                        
+                        Object lastActivity = stats.get("last_activity");
+                        if (lastActivity instanceof Number) {
+                            safeResponse.put("last_activity", ((Number) lastActivity).longValue());
+                        }
+                        
+                        Object totalEvents = stats.get("total_events_sent");
+                        if (totalEvents instanceof Number) {
+                            safeResponse.put("total_events_sent", ((Number) totalEvents).longValue());
+                        }
+                        
+                        Object uptime = stats.get("uptime_ms");
+                        if (uptime instanceof Number) {
+                            safeResponse.put("uptime_ms", ((Number) uptime).longValue());
+                        }
+                        
+                        // Skip connections_by_session for now to avoid complex object serialization
+                        safeResponse.put("connections_by_session", new HashMap<String, Integer>());
+                    } catch (Exception statsError) {
+                        logger.warn("Error extracting individual stats: {}", statsError.getMessage());
+                    }
+                }
+                
+                ctx.json(safeResponse);
+                logger.info("WebSocket stats endpoint completed successfully");
             } catch (Exception e) {
                 logger.error("Failed to get WebSocket stats", e);
                 ctx.status(500).json(Map.of(
                     "error", "Failed to get WebSocket stats",
-                    "message", e.getMessage()
+                    "message", e.getMessage() != null ? e.getMessage() : "Unknown error"
                 ));
             }
         });
@@ -1213,6 +1259,11 @@ public class RouteHandler {
                 // Process basic request options (advanced features require newer API)
                 Map<String, Object> options = (Map<String, Object>) requestData.get("options");
                 
+                // Apply request intercept rules before sending (if service exists)
+                if (proxyInterceptionService != null) {
+                    httpRequest = applyRequestInterceptRules(httpRequest);
+                }
+                
                 // Track timing for basic performance monitoring
                 long requestStart = System.currentTimeMillis();
                 
@@ -1220,6 +1271,15 @@ public class RouteHandler {
                 burp.api.montoya.http.message.HttpRequestResponse response = httpService.sendRequest(httpRequest);
                 
                 long requestDuration = System.currentTimeMillis() - requestStart;
+                
+                // Apply response intercept rules after receiving (if service exists)
+                if (proxyInterceptionService != null && response.response() != null) {
+                    HttpResponse modifiedResponse = applyResponseInterceptRules(response.response());
+                    // Create new HttpRequestResponse with modified response
+                    response = burp.api.montoya.http.message.HttpRequestResponse.httpRequestResponse(
+                        response.request(), modifiedResponse
+                    );
+                }
                 
                 // Store the request and response using normalized schema with timing data
                 String requestHttpVersion = httpRequest.httpVersion();
@@ -2276,27 +2336,6 @@ public class RouteHandler {
             }
         });
         
-        //  Reset scope - Limited by API capabilities
-        app.delete("/scope/reset", ctx -> {
-            try {
-                Map<String, Object> response = new HashMap<>();
-                response.put("message", "Scope reset not directly supported by Burp Montoya API");
-                response.put("api_limitation", "The Montoya API does not provide methods to enumerate or remove existing scope rules");
-                response.put("workaround", "Use Burp's native scope management or exclude specific URLs via POST /scope/exclude");
-                response.put("timestamp", System.currentTimeMillis());
-                
-                logger.warn("Scope reset requested but not supported by Montoya API");
-                
-                ctx.status(501).json(response); // 501 Not Implemented
-                
-            } catch (Exception e) {
-                logger.error("Failed to handle scope reset request", e);
-                ctx.status(500).json(Map.of(
-                    "error", "Scope reset failed",
-                    "message", e.getMessage()
-                ));
-            }
-        });
         
         //  Import URLs to scope
         app.post("/scope/import", ctx -> {
@@ -2435,6 +2474,112 @@ public class RouteHandler {
                 ctx.status(500).json(Map.of(
                     "error", "Scope import failed",
                     "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Reset scope - Clear all include/exclude rules using proper Montoya API
+        app.post("/scope/reset", ctx -> {
+            try {
+                Map<String, Object> response = new HashMap<>();
+                List<String> clearedIncludes = new ArrayList<>();
+                List<String> clearedExcludes = new ArrayList<>();
+                List<String> errors = new ArrayList<>();
+                
+                // Get current scope configuration from project
+                try {
+                    String projectConfigJson = api.burpSuite().exportProjectOptionsAsJson();
+                    ObjectMapper mapper = new ObjectMapper();
+                    JsonNode projectConfig = mapper.readTree(projectConfigJson);
+                    JsonNode scopeConfig = projectConfig.path("target").path("scope");
+                    
+                    if (!scopeConfig.isMissingNode()) {
+                        // Process include rules - exclude them to clear
+                        JsonNode includeRules = scopeConfig.path("include");
+                        if (includeRules.isArray()) {
+                            for (JsonNode includeRule : includeRules) {
+                                if (includeRule.path("enabled").asBoolean(true)) {
+                                    String prefix = includeRule.path("prefix").asText();
+                                    if (!prefix.isEmpty()) {
+                                        try {
+                                            api.scope().excludeFromScope(prefix);
+                                            clearedIncludes.add(prefix);
+                                            logger.info("Cleared include rule: {}", prefix);
+                                        } catch (Exception e) {
+                                            errors.add("Failed to clear include rule " + prefix + ": " + e.getMessage());
+                                            logger.error("Failed to clear include rule: {}", prefix, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        // Process exclude rules - include them to remove exclusions
+                        JsonNode excludeRules = scopeConfig.path("exclude");
+                        if (excludeRules.isArray()) {
+                            for (JsonNode excludeRule : excludeRules) {
+                                if (excludeRule.path("enabled").asBoolean(true)) {
+                                    String prefix = excludeRule.path("prefix").asText();
+                                    if (!prefix.isEmpty()) {
+                                        try {
+                                            api.scope().includeInScope(prefix);
+                                            clearedExcludes.add(prefix);
+                                            logger.info("Cleared exclude rule: {}", prefix);
+                                        } catch (Exception e) {
+                                            errors.add("Failed to clear exclude rule " + prefix + ": " + e.getMessage());
+                                            logger.error("Failed to clear exclude rule: {}", prefix, e);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        response.put("message", "Scope reset completed successfully");
+                        response.put("cleared_includes", clearedIncludes);
+                        response.put("cleared_excludes", clearedExcludes);
+                        response.put("includes_cleared_count", clearedIncludes.size());
+                        response.put("excludes_cleared_count", clearedExcludes.size());
+                        response.put("total_rules_processed", clearedIncludes.size() + clearedExcludes.size());
+                        
+                        if (!errors.isEmpty()) {
+                            response.put("errors", errors);
+                            response.put("partial_success", true);
+                        }
+                        
+                        // Log the reset action
+                        logger.info("Scope reset completed: {} includes cleared, {} excludes cleared", 
+                                   clearedIncludes.size(), clearedExcludes.size());
+                        
+                    } else {
+                        response.put("message", "No scope configuration found - scope already empty");
+                        response.put("cleared_includes", clearedIncludes);
+                        response.put("cleared_excludes", clearedExcludes);
+                    }
+                    
+                } catch (Exception configError) {
+                    logger.error("Failed to read project scope configuration for reset", configError);
+                    response.put("error", "Failed to read scope configuration");
+                    response.put("message", "Could not access current scope rules: " + configError.getMessage());
+                    ctx.status(500).json(response);
+                    return;
+                }
+                
+                response.put("timestamp", System.currentTimeMillis());
+                response.put("operation", "scope_reset");
+                response.put("api_version", "2025.8+");
+                
+                if (errors.isEmpty()) {
+                    ctx.json(response);
+                } else {
+                    ctx.status(207).json(response); // 207 Multi-Status for partial success
+                }
+                
+            } catch (Exception e) {
+                logger.error("Failed to reset scope", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Scope reset failed",
+                    "message", e.getMessage(),
+                    "timestamp", System.currentTimeMillis()
                 ));
             }
         });
@@ -2907,8 +3052,8 @@ public class RouteHandler {
             // Real-time Proxy Interception (Montoya API 2025.8+)
             Map.of("method", "POST", "path", "/proxy/intercept/rules", "description", "Create real-time proxy interception rules for dynamic request/response modification (requires: name, type, condition, action)"),
             Map.of("method", "GET", "path", "/proxy/intercept/rules", "description", "List all active proxy interception rules with hit counts and status"),
-            Map.of("method", "DELETE", "path", "/proxy/intercept/rules/{ruleId}", "description", "Delete specific proxy interception rule by ID"),
-            Map.of("method", "PUT", "path", "/proxy/intercept/rules/{ruleId}/toggle", "description", "Enable or disable specific proxy interception rule (requires: enabled boolean)"),
+            Map.of("method", "POST", "path", "/proxy/intercept/rules/{ruleId}/toggle", "description", "Enable or disable specific proxy interception rule (requires: enabled boolean)"),
+            Map.of("method", "POST", "path", "/proxy/intercept/rules/{ruleId}/delete", "description", "Delete specific proxy interception rule by ID"),
             
             //  WebSocket Streaming
             Map.of("method", "WS", "path", "/ws/stream", "description", "Real-time WebSocket traffic streaming (query: session_tag; events: traffic.new, traffic.tagged, stats.updated, etc.)"),
@@ -2921,7 +3066,7 @@ public class RouteHandler {
             Map.of("method", "GET", "path", "/scope/check", "description", "Check if URL is in scope (optimized with caching) (requires: url parameter)"),
             Map.of("method", "POST", "path", "/scope/exclude", "description", "Exclude URLs from scope (requires: url or urls; supports single URL or array)"),
             Map.of("method", "POST", "path", "/scope/import", "description", "Import URLs to scope (supports JSON array or plain text; options: type=include|exclude, session_tag)"),
-            Map.of("method", "DELETE", "path", "/scope/reset", "description", "Reset scope (limited by Burp API - returns 501 Not Implemented)"),
+            Map.of("method", "POST", "path", "/scope/reset", "description", "Reset scope by clearing all include/exclude rules (reads current rules from project config and uses Montoya API to clear them)"),
             
             // Scanner integration
             Map.of("method", "GET", "path", "/scanner/issues", "description", "Get scanner issues with filtering (severity, confidence, name, host, url, case_insensitive, limit, offset)"),
@@ -2939,7 +3084,6 @@ public class RouteHandler {
             Map.of("method", "GET", "path", "/performance/metrics", "description", "Get real-time performance metrics including memory usage and extension status"),
             Map.of("method", "POST", "path", "/performance/cache/clear", "description", "Clear all performance caches (scope cache, memory caches)"),
             Map.of("method", "GET", "path", "/performance/recommendations", "description", "Get optimization recommendations based on current usage patterns"),
-            Map.of("method", "GET", "path", "/performance/deduplication", "description", "Get deduplication statistics and history (duplicate detection status)"),
             
             // Session management (new)
             Map.of("method", "GET", "path", "/session/current", "description", "Get current session tag with statistics and usage information"),
@@ -2960,12 +3104,7 @@ public class RouteHandler {
             // Queue Monitoring (QueueMonitoringRouteRegistrar - 8 endpoints)
             Map.of("method", "GET", "path", "/queue/metrics", "description", "Get comprehensive queue performance metrics including processing rates, error counts, and capacity utilization"),
             Map.of("method", "GET", "path", "/queue/health", "description", "Get queue health status with operational indicators and diagnostics"),
-            Map.of("method", "GET", "path", "/queue/backpressure", "description", "Get backpressure status with threshold monitoring and recommendations"),
-            Map.of("method", "GET", "path", "/queue/dead-letter", "description", "Get dead letter queue status and retry configuration"),
-            Map.of("method", "GET", "path", "/queue/priority-distribution", "description", "Get priority level distribution across queue items"),
             Map.of("method", "GET", "path", "/queue/metrics/history", "description", "Get historical queue metrics for trend analysis"),
-            Map.of("method", "POST", "path", "/queue/reset-circuit-breaker", "description", "Reset the circuit breaker to allow processing to resume"),
-            Map.of("method", "POST", "path", "/queue/clear-dead-letter", "description", "Clear dead letter queue and discard failed items"),
             
             // Webhook Management (WebhookRouteRegistrar - 8 endpoints)
             Map.of("method", "GET", "path", "/webhooks", "description", "List all registered webhooks with delivery statistics"),
@@ -3461,8 +3600,36 @@ public class RouteHandler {
                 
                 String name = (String) ruleData.get("name");
                 String typeStr = (String) ruleData.get("type");
-                Map<String, Object> conditions = (Map<String, Object>) ruleData.get("condition");
-                Map<String, Object> actions = (Map<String, Object>) ruleData.get("action");
+                
+                // Handle condition - can be string or object
+                Map<String, Object> conditions = new HashMap<>();
+                Object conditionData = ruleData.get("condition");
+                if (conditionData instanceof String) {
+                    conditions.put("type", conditionData);
+                } else if (conditionData instanceof Map) {
+                    conditions = (Map<String, Object>) conditionData;
+                } else {
+                    ctx.status(400).json(Map.of(
+                        "error", "Invalid condition format",
+                        "message", "Condition must be a string or object"
+                    ));
+                    return;
+                }
+                
+                // Handle action - can be string or object  
+                Map<String, Object> actions = new HashMap<>();
+                Object actionData = ruleData.get("action");
+                if (actionData instanceof String) {
+                    actions.put("type", actionData);
+                } else if (actionData instanceof Map) {
+                    actions = (Map<String, Object>) actionData;
+                } else {
+                    ctx.status(400).json(Map.of(
+                        "error", "Invalid action format",
+                        "message", "Action must be a string or object"
+                    ));
+                    return;
+                }
                 
                 // Create interception service if not exists
                 if (proxyInterceptionService == null) {
@@ -3518,6 +3685,96 @@ public class RouteHandler {
                 logger.error("Failed to get interception rules", e);
                 ctx.status(500).json(Map.of(
                     "error", "Failed to get rules",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Toggle intercept rule (POST method due to Javalin PUT issues)
+        app.post("/proxy/intercept/rules/{ruleId}/toggle", ctx -> {
+            try {
+                String ruleId = ctx.pathParam("ruleId");
+                Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
+                
+                if (!requestData.containsKey("enabled")) {
+                    ctx.status(400).json(Map.of(
+                        "error", "Missing required field",
+                        "message", "Field 'enabled' is required",
+                        "required_fields", List.of("enabled")
+                    ));
+                    return;
+                }
+                
+                boolean enabled = Boolean.TRUE.equals(requestData.get("enabled"));
+                
+                if (proxyInterceptionService == null) {
+                    ctx.status(503).json(Map.of(
+                        "error", "Service unavailable",
+                        "message", "Proxy interception service is not initialized"
+                    ));
+                    return;
+                }
+                
+                boolean success = proxyInterceptionService.toggleRule(ruleId, enabled);
+                
+                if (success) {
+                    ctx.json(Map.of(
+                        "rule_id", ruleId,
+                        "enabled", enabled,
+                        "message", "Rule " + (enabled ? "enabled" : "disabled") + " successfully",
+                        "api_version", "2025.8+"
+                    ));
+                } else {
+                    ctx.status(404).json(Map.of(
+                        "error", "Rule not found",
+                        "message", "No interception rule found with ID: " + ruleId,
+                        "rule_id", ruleId
+                    ));
+                }
+                
+            } catch (Exception e) {
+                logger.error("Failed to toggle interception rule", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to toggle rule",
+                    "message", e.getMessage()
+                ));
+            }
+        });
+        
+        // Delete intercept rule (POST method due to Javalin DELETE issues)
+        app.post("/proxy/intercept/rules/{ruleId}/delete", ctx -> {
+            try {
+                String ruleId = ctx.pathParam("ruleId");
+                
+                if (proxyInterceptionService == null) {
+                    ctx.status(503).json(Map.of(
+                        "error", "Service unavailable", 
+                        "message", "Proxy interception service is not initialized"
+                    ));
+                    return;
+                }
+                
+                boolean success = proxyInterceptionService.removeRule(ruleId);
+                
+                if (success) {
+                    ctx.json(Map.of(
+                        "rule_id", ruleId,
+                        "message", "Interception rule deleted successfully",
+                        "status", "deleted",
+                        "api_version", "2025.8+"
+                    ));
+                } else {
+                    ctx.status(404).json(Map.of(
+                        "error", "Rule not found",
+                        "message", "No interception rule found with ID: " + ruleId,
+                        "rule_id", ruleId
+                    ));
+                }
+                
+            } catch (Exception e) {
+                logger.error("Failed to delete interception rule", e);
+                ctx.status(500).json(Map.of(
+                    "error", "Failed to delete rule",
                     "message", e.getMessage()
                 ));
             }
@@ -4266,21 +4523,6 @@ public class RouteHandler {
             ctx.json(response);
         });
         
-        // NEW: Deduplication status and statistics
-        app.get("/performance/deduplication", ctx -> {
-            if (!checkDatabaseAvailable(ctx)) return;
-            
-            try {
-                Map<String, Object> dedupeStats = databaseService.getDeduplicationStats();
-                ctx.json(dedupeStats);
-            } catch (Exception e) {
-                logger.error("Failed to get deduplication statistics", e);
-                ctx.status(500).json(Map.of(
-                    "error", "Failed to get deduplication statistics",
-                    "message", e.getMessage()
-                ));
-            }
-        });
         
         // Deduplication endpoint removed - deduplication is now internal only
         
@@ -4726,5 +4968,202 @@ public class RouteHandler {
             logger.error("Failed to create traffic_meta record for ID {}: {}", requestId, e.getMessage());
         }
         return false;
+    }
+    
+    /**
+     * Apply request intercept rules manually for /proxy/send requests
+     */
+    private burp.api.montoya.http.message.requests.HttpRequest applyRequestInterceptRules(
+            burp.api.montoya.http.message.requests.HttpRequest request) {
+        try {
+            Map<String, Map<String, Object>> rules = proxyInterceptionService.getAllRules();
+            
+            burp.api.montoya.http.message.requests.HttpRequest modifiedRequest = request;
+            
+            for (Map.Entry<String, Map<String, Object>> entry : rules.entrySet()) {
+                Map<String, Object> rule = entry.getValue();
+                
+                // Only process REQUEST type rules that are enabled
+                if (!"REQUEST".equals(rule.get("type")) || !Boolean.TRUE.equals(rule.get("enabled"))) {
+                    continue;
+                }
+                
+                // Check if condition matches
+                if (matchesRequestCondition(rule, request)) {
+                    // Apply the action
+                    modifiedRequest = applyRequestAction(rule, modifiedRequest);
+                    logger.debug("Applied API request rule '{}' to {}", rule.get("name"), request.url());
+                }
+            }
+            
+            return modifiedRequest;
+            
+        } catch (Exception e) {
+            logger.error("Error applying request intercept rules to /proxy/send request", e);
+            return request;
+        }
+    }
+    
+    /**
+     * Apply response intercept rules manually for /proxy/send responses
+     */
+    private HttpResponse applyResponseInterceptRules(HttpResponse response) {
+        try {
+            Map<String, Map<String, Object>> rules = proxyInterceptionService.getAllRules();
+            
+            HttpResponse modifiedResponse = response;
+            
+            for (Map.Entry<String, Map<String, Object>> entry : rules.entrySet()) {
+                Map<String, Object> rule = entry.getValue();
+                
+                // Only process RESPONSE type rules that are enabled
+                if (!"RESPONSE".equals(rule.get("type")) || !Boolean.TRUE.equals(rule.get("enabled"))) {
+                    continue;
+                }
+                
+                // Check if condition matches
+                if (matchesResponseCondition(rule, response)) {
+                    // Apply the action
+                    modifiedResponse = applyResponseAction(rule, modifiedResponse);
+                    logger.debug("Applied API response rule '{}' to status {}", rule.get("name"), response.statusCode());
+                }
+            }
+            
+            return modifiedResponse;
+            
+        } catch (Exception e) {
+            logger.error("Error applying response intercept rules to /proxy/send response", e);
+            return response;
+        }
+    }
+    
+    /**
+     * Check if request matches rule conditions (simplified version of ProxyInterceptionService logic)
+     */
+    private boolean matchesRequestCondition(Map<String, Object> rule, burp.api.montoya.http.message.requests.HttpRequest request) {
+        try {
+            Map<String, Object> conditions = (Map<String, Object>) rule.get("conditions");
+            String conditionType = (String) conditions.get("type");
+            
+            if (conditionType == null) return false;
+            
+            switch (conditionType.toLowerCase()) {
+                case "url_contains":
+                    String urlPattern = (String) conditions.get("value");
+                    return urlPattern != null && request.url().toLowerCase().contains(urlPattern.toLowerCase());
+                    
+                case "method_equals":
+                    String methodPattern = (String) conditions.get("value");
+                    return methodPattern != null && methodPattern.equalsIgnoreCase(request.method());
+                    
+                case "all":
+                    return true;
+                    
+                case "none":
+                    return false;
+                    
+                default:
+                    return false;
+            }
+        } catch (Exception e) {
+            logger.error("Error matching request condition", e);
+            return false;
+        }
+    }
+    
+    /**
+     * Check if response matches rule conditions (simplified version of ProxyInterceptionService logic)
+     */
+    private boolean matchesResponseCondition(Map<String, Object> rule, HttpResponse response) {
+        try {
+            Map<String, Object> conditions = (Map<String, Object>) rule.get("conditions");
+            String conditionType = (String) conditions.get("type");
+            
+            if (conditionType == null) return false;
+            
+            switch (conditionType.toLowerCase()) {
+                case "status_equals":
+                    Integer statusCode = (Integer) conditions.get("value");
+                    return statusCode != null && statusCode == response.statusCode();
+                    
+                case "all":
+                    return true;
+                    
+                case "none":
+                    return false;
+                    
+                default:
+                    return false;
+            }
+        } catch (Exception e) {
+            logger.error("Error matching response condition", e);
+            return false;
+        }
+    }
+    
+    /**
+     * Apply action to request (simplified version of ProxyInterceptionService logic)
+     */
+    private burp.api.montoya.http.message.requests.HttpRequest applyRequestAction(Map<String, Object> rule, burp.api.montoya.http.message.requests.HttpRequest request) {
+        try {
+            Map<String, Object> actions = (Map<String, Object>) rule.get("actions");
+            String actionType = (String) actions.get("type");
+            
+            if (actionType == null) return request;
+            
+            switch (actionType.toLowerCase()) {
+                case "add_header":
+                    String headerName = (String) actions.get("header_name");
+                    String headerValue = (String) actions.get("value");
+                    if (headerName != null && headerValue != null) {
+                        return request.withAddedHeader(headerName, headerValue);
+                    }
+                    break;
+                    
+                case "replace_header":
+                    String replaceHeaderName = (String) actions.get("header_name");
+                    String replaceHeaderValue = (String) actions.get("value");
+                    if (replaceHeaderName != null && replaceHeaderValue != null) {
+                        return request.withUpdatedHeader(replaceHeaderName, replaceHeaderValue);
+                    }
+                    break;
+            }
+        } catch (Exception e) {
+            logger.error("Error applying request action", e);
+        }
+        return request;
+    }
+    
+    /**
+     * Apply action to response (simplified version of ProxyInterceptionService logic) 
+     */
+    private HttpResponse applyResponseAction(Map<String, Object> rule, HttpResponse response) {
+        try {
+            Map<String, Object> actions = (Map<String, Object>) rule.get("actions");
+            String actionType = (String) actions.get("type");
+            
+            if (actionType == null) return response;
+            
+            switch (actionType.toLowerCase()) {
+                case "add_header":
+                    String headerName = (String) actions.get("header_name");
+                    String headerValue = (String) actions.get("value");
+                    if (headerName != null && headerValue != null) {
+                        return response.withAddedHeader(headerName, headerValue);
+                    }
+                    break;
+                    
+                case "replace_header":
+                    String replaceHeaderName = (String) actions.get("header_name");
+                    String replaceHeaderValue = (String) actions.get("value");
+                    if (replaceHeaderName != null && replaceHeaderValue != null) {
+                        return response.withUpdatedHeader(replaceHeaderName, replaceHeaderValue);
+                    }
+                    break;
+            }
+        } catch (Exception e) {
+            logger.error("Error applying response action", e);
+        }
+        return response;
     }
 }
