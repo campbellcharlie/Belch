@@ -36,16 +36,18 @@ public class TrafficQueue {
     
     private static final Logger logger = LoggerFactory.getLogger(TrafficQueue.class);
     
-    // Queue configuration
-    private static final int DEFAULT_QUEUE_SIZE = 50000; // Large enough for high-volume testing
-    private static final int BATCH_SIZE = 100; // Process records in batches for better DB performance
-    private static final int PROCESSING_INTERVAL_MS = 500; // Process queue every 500ms
-    private static final int MAX_PROCESSING_TIME_MS = 200; // Don't spend more than 200ms per processing cycle
+    // HIGH-PERFORMANCE Queue configuration optimized for WAL mode + large datasets
+    private static final int DEFAULT_QUEUE_SIZE = 100000; // Large buffer for high-volume bursts
+    private static final int MIN_BATCH_SIZE = 50;         // Small batches for low-latency
+    private static final int MAX_BATCH_SIZE = 500;        // Large batches for high-throughput  
+    private static final int ADAPTIVE_BATCH_SIZE = 250;   // Default adaptive batch size
+    private static final int PROCESSING_INTERVAL_MS = 1;  // Ultra-low latency WebSocket streaming
+    private static final int MAX_PROCESSING_TIME_MS = 1000; // More time for WAL mode batch commits
     
     private final DatabaseService databaseService;
     private final ApiConfig config;
     
-    // Phase 12: WebSocket event broadcasting
+    // WebSocket event broadcasting
     private EventBroadcaster eventBroadcaster;
     
     // Queue for storing traffic items
@@ -197,17 +199,17 @@ public class TrafficQueue {
             return;
         }
         
-        logger.info("🚀 Starting TrafficQueue with capacity: {}, batch size: {}", 
-                   DEFAULT_QUEUE_SIZE, BATCH_SIZE);
+        logger.info("Starting TrafficQueue with capacity: {}, adaptive batch size: {}-{}", 
+                   DEFAULT_QUEUE_SIZE, MIN_BATCH_SIZE, MAX_BATCH_SIZE);
         
         // Start background processing thread
         processingExecutor.submit(this::processQueue);
         
-        logger.info("✅ TrafficQueue started successfully");
+        logger.info("TrafficQueue started successfully");
     }
     
     /**
-     * Set the event broadcaster for real-time WebSocket updates (Phase 12).
+     * Set the event broadcaster for real-time WebSocket updates.
      */
     public void setEventBroadcaster(EventBroadcaster eventBroadcaster) {
         this.eventBroadcaster = eventBroadcaster;
@@ -222,7 +224,7 @@ public class TrafficQueue {
             return;
         }
         
-        logger.info("🛑 Stopping TrafficQueue...");
+        logger.info("Stopping TrafficQueue...");
         running.set(false);
         
         // Process remaining items
@@ -240,7 +242,7 @@ public class TrafficQueue {
             processingExecutor.shutdownNow();
         }
         
-        logger.info("✅ TrafficQueue stopped. Final stats: queued={}, processed={}, dropped={}, errors={}", 
+        logger.info("TrafficQueue stopped. Final stats: queued={}, processed={}, dropped={}, errors={}", 
                    totalQueued.get(), totalProcessed.get(), totalDropped.get(), totalErrors.get());
     }
     
@@ -315,7 +317,7 @@ public class TrafficQueue {
             
             // Log warning occasionally (not for every drop to avoid log spam)
             if (totalDropped.get() % 1000 == 1) {
-                logger.warn("⚠️ TrafficQueue full - dropping items. Total dropped: {}. " +
+                logger.warn("TrafficQueue full - dropping items. Total dropped: {}. " +
                            "Consider increasing queue size or database performance.", totalDropped.get());
             }
         }
@@ -327,7 +329,7 @@ public class TrafficQueue {
      * Main processing loop that handles the traffic queue.
      */
     private void processQueue() {
-        logger.info("✅ Traffic queue processing started");
+        logger.info("Traffic queue processing started");
         
         while (running.get() && !Thread.currentThread().isInterrupted()) {
             try {
@@ -336,12 +338,15 @@ public class TrafficQueue {
                 // Check for project changes periodically
                 checkForProjectChange();
                 
-                // Process batches of traffic items
+                // Process batches with adaptive sizing for optimal performance
                 List<TrafficItem> batch = new ArrayList<>();
+                
+                // ADAPTIVE BATCHING: Adjust batch size based on queue load
+                int currentBatchSize = calculateOptimalBatchSize();
                 
                 // Collect items for batch processing (non-blocking)
                 TrafficItem item;
-                while (batch.size() < BATCH_SIZE && 
+                while (batch.size() < currentBatchSize && 
                        (item = trafficQueue.poll()) != null) {
                     batch.add(item);
                 }
@@ -437,7 +442,7 @@ public class TrafficQueue {
                             if (result > 0) {
                                 processed++;
                                 
-                                // Phase 12: Broadcast new traffic event to WebSocket clients
+                                // Broadcast new traffic event to WebSocket clients
                                 if (eventBroadcaster != null) {
                                     Map<String, Object> trafficData = new HashMap<>();
                                     trafficData.put("id", result);
@@ -480,13 +485,13 @@ public class TrafficQueue {
             
             // Enhanced logging with duplicate tracking
             if (totalProcessed.get() % 1000 == 0) {
-                logger.debug("📊 TrafficQueue stats: processed={}, queue_size={}, processing_time={}ms, errors={}, duplicates_skipped={}", 
+                logger.debug("TrafficQueue stats: processed={}, queue_size={}, processing_time={}ms, errors={}, duplicates_skipped={}", 
                            processed, currentQueueSize, processingTime, errors, duplicates);
             }
             
             // Log performance warnings
             if (processingTime > MAX_PROCESSING_TIME_MS) {
-                logger.warn("⚠️ Batch processing exceeded time limit: {}ms (target: {}ms)", 
+                logger.warn("Batch processing exceeded time limit: {}ms (target: {}ms)", 
                            processingTime, MAX_PROCESSING_TIME_MS);
             }
             
@@ -494,7 +499,7 @@ public class TrafficQueue {
             if (processed > 0) {
                 double itemsPerSecond = (processed * 1000.0) / processingTime;
                 if (itemsPerSecond < 50) { // Less than 50 items/second is slow
-                    logger.warn("⚠️ Slow batch processing: {:.1f} items/second", itemsPerSecond);
+                    logger.warn("Slow batch processing: {:.1f} items/second", itemsPerSecond);
                 }
             }
             
@@ -512,7 +517,7 @@ public class TrafficQueue {
             return;
         }
         
-        logger.info("📋 Processing {} remaining traffic items...", trafficQueue.size());
+        logger.info("Processing {} remaining traffic items...", trafficQueue.size());
         
         int processed = 0;
         long startTime = System.currentTimeMillis();
@@ -522,7 +527,8 @@ public class TrafficQueue {
             List<TrafficItem> batch = new ArrayList<>();
             
             // Collect batch
-            for (int i = 0; i < BATCH_SIZE && !trafficQueue.isEmpty(); i++) {
+            int emergencyBatchSize = calculateOptimalBatchSize();
+            for (int i = 0; i < emergencyBatchSize && !trafficQueue.isEmpty(); i++) {
                 TrafficItem item = trafficQueue.poll();
                 if (item != null) {
                     batch.add(item);
@@ -538,7 +544,7 @@ public class TrafficQueue {
         logger.info("📋 Processed {} remaining items in {}ms", processed, System.currentTimeMillis() - startTime);
         
         if (!trafficQueue.isEmpty()) {
-            logger.warn("⚠️ {} traffic items were not processed during shutdown (timeout)", trafficQueue.size());
+            logger.warn("{} traffic items were not processed during shutdown (timeout)", trafficQueue.size());
         }
     }
     
@@ -559,7 +565,8 @@ public class TrafficQueue {
         metrics.put("queue_capacity", DEFAULT_QUEUE_SIZE);
         metrics.put("queue_utilization_percent", (currentQueueSize * 100.0) / DEFAULT_QUEUE_SIZE);
         metrics.put("last_processing_time_ms", lastProcessingTime);
-        metrics.put("batch_size", BATCH_SIZE);
+        metrics.put("adaptive_batch_size_range", MIN_BATCH_SIZE + "-" + MAX_BATCH_SIZE);
+        metrics.put("current_batch_size", calculateOptimalBatchSize());
         metrics.put("processing_interval_ms", PROCESSING_INTERVAL_MS);
         
         // Calculate processing rate
@@ -572,6 +579,30 @@ public class TrafficQueue {
         }
         
         return metrics;
+    }
+    
+    /**
+     * ADAPTIVE BATCHING: Calculate optimal batch size based on current load.
+     * Optimizes for WAL mode performance characteristics.
+     * 
+     * @return optimal batch size between MIN_BATCH_SIZE and MAX_BATCH_SIZE
+     */
+    private int calculateOptimalBatchSize() {
+        int queueSize = trafficQueue.size();
+        
+        // LOW LOAD: Use small batches for low latency (real-time feeling)
+        if (queueSize < 10) {
+            return MIN_BATCH_SIZE;  // 50 items - fast processing
+        }
+        
+        // MEDIUM LOAD: Use adaptive batching for balanced performance  
+        if (queueSize < 1000) {
+            // Scale linearly: 50 + (queueSize * 0.25)
+            return Math.min(MAX_BATCH_SIZE, MIN_BATCH_SIZE + (queueSize / 4));
+        }
+        
+        // HIGH LOAD: Use large batches for maximum throughput
+        return MAX_BATCH_SIZE;  // 500 items - bulk processing efficiency
     }
     
     /**

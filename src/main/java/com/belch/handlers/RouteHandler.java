@@ -64,14 +64,14 @@ public class RouteHandler {
     private final ScanTaskManager scanTaskManager;
     private com.belch.services.ProxyInterceptionService proxyInterceptionService;
     
-    // Phase 3 Task 14: BChecks service
+    // BChecks service
     private final BCheckService bCheckService;
     
-    // Phase 12: WebSocket streaming components
+    //  WebSocket streaming components
     private final WebSocketManager webSocketManager;
     private final EventBroadcaster eventBroadcaster;
     
-    // Phase 2: Enhanced services for missing route registrars
+    //  Enhanced services for missing route registrars
     private final com.belch.services.CollaboratorInteractionService collaboratorInteractionService;
     private final com.belch.database.EnhancedTrafficQueue enhancedTrafficQueue;
     private final com.belch.services.WebhookService webhookService;
@@ -95,17 +95,17 @@ public class RouteHandler {
         this.config = config;
         this.objectMapper = new ObjectMapper();
         
-        // Phase 12: Initialize WebSocket components
+        //  Initialize WebSocket components
         this.webSocketManager = new WebSocketManager();
         this.eventBroadcaster = new EventBroadcaster(this.webSocketManager);
         
         // Initialize ScanTaskManager
         this.scanTaskManager = new ScanTaskManager(databaseService, webSocketManager);
         
-        // Phase 3 Task 14: Initialize BCheck service
+        // Initialize BCheck service
         this.bCheckService = new BCheckService(api, config, databaseService);
         
-        // Phase 2: Initialize enhanced services for missing route registrars
+        //  Initialize enhanced services for missing route registrars
         this.collaboratorInteractionService = new com.belch.services.CollaboratorInteractionService(databaseService, config);
         this.enhancedTrafficQueue = new com.belch.database.EnhancedTrafficQueue(databaseService, config);
         this.queueMetricsCollectionService = new com.belch.services.QueueMetricsCollectionService(databaseService, enhancedTrafficQueue, config);
@@ -489,7 +489,7 @@ public class RouteHandler {
         // Register scanner routes
         registerScannerRoutes(app);
         
-        // Register BCheck routes (Phase 3 Task 14)
+        // Register BCheck routes 
         registerBCheckRoutes(app);
         
         // Register configuration management routes
@@ -498,7 +498,7 @@ public class RouteHandler {
         // Register authentication routes
         registerAuthRoutes(app);
         
-        // Register documentation routes (Phase 8)
+        // Register documentation routes 
         registerDocumentationRoutes(app);
         
         // Register collaborator routes
@@ -522,13 +522,13 @@ public class RouteHandler {
         // Register analytics and stats routes
         registerAnalyticsRoutes(app);
         
-        // Register enhanced collaborator routes (Phase 2)
+        // Register enhanced collaborator routes 
         registerEnhancedCollaboratorRoutes(app);
         
-        // Register queue monitoring routes (Phase 2)
+        // Register queue monitoring routes 
         registerQueueMonitoringRoutes(app);
         
-        // Register webhook routes (Phase 3)
+        // Register webhook routes 
         registerWebhookRoutes(app);
         
         // Register replay functionality - using replay-matched format
@@ -884,7 +884,7 @@ public class RouteHandler {
      * Registers proxy-related routes.
      */
     private void registerProxyRoutes(Javalin app) {
-        // Enhanced search proxy traffic with Phase 3 features
+        // Enhanced search proxy traffic with features
         app.get("/proxy/search", ctx -> {
             if (!checkDatabaseAvailable(ctx)) return;
             
@@ -1164,7 +1164,7 @@ public class RouteHandler {
             ctx.json(response);
         });
         
-        // Phase 4: Replay endpoint - Send raw request and capture response
+        //  Replay endpoint - Send raw request and capture response
         app.post("/proxy/send", ctx -> {
             try {
                 Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
@@ -1295,7 +1295,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 4: Upload endpoint for HAR files and raw HTTP logs
+        //  Upload endpoint for HAR files and raw HTTP logs
         app.post("/proxy/upload", ctx -> {
             try {
                 String contentType = ctx.contentType();
@@ -1747,7 +1747,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 4: Delete/purge endpoint
+        //  Delete/purge endpoint
         app.delete("/proxy/delete", ctx -> {
             try {
                 String sessionTag = ctx.queryParam("session_tag");
@@ -1800,7 +1800,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 4: Replay matched results from a search
+        //  Replay matched results from a search
         app.post("/proxy/replay-matched", ctx -> {
             try {
                 Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
@@ -2073,7 +2073,7 @@ public class RouteHandler {
      * Registers scope-related routes.
      */
     private void registerScopeRoutes(Javalin app) {
-        // Phase 5: Get current scope - Now enhanced with actual project scope data
+        //  Get current scope - Now enhanced with actual project scope data
         app.get("/scope/current", ctx -> {
             try {
                 Map<String, Object> response = new HashMap<>();
@@ -2178,7 +2178,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 5: Check if URL is in scope
+        //  Check if URL is in scope
         app.get("/scope/check", ctx -> {
             try {
                 String url = ctx.queryParam("url");
@@ -2209,7 +2209,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 5: Exclude URLs from scope
+        //  Exclude URLs from scope
         app.post("/scope/exclude", ctx -> {
             try {
                 Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
@@ -2276,7 +2276,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 5: Reset scope - Limited by API capabilities
+        //  Reset scope - Limited by API capabilities
         app.delete("/scope/reset", ctx -> {
             try {
                 Map<String, Object> response = new HashMap<>();
@@ -2298,7 +2298,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 5: Import URLs to scope
+        //  Import URLs to scope
         app.post("/scope/import", ctx -> {
             try {
                 String contentType = ctx.contentType();
@@ -2439,7 +2439,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 5: Export full project configuration
+        //  Export full project configuration
         app.get("/scope/project-config", ctx -> {
             try {
                 String sections = ctx.queryParam("sections");
@@ -2489,7 +2489,7 @@ public class RouteHandler {
     }
     
     /**
-     * Registers BCheck-related routes (Phase 3 Task 14).
+     * Registers BCheck-related routes .
      */
     private void registerBCheckRoutes(Javalin app) {
         // Delegate to BCheckRouteRegistrar
@@ -2510,7 +2510,7 @@ public class RouteHandler {
      * Registers authentication and session management routes.
      */
     private void registerAuthRoutes(Javalin app) {
-        // Phase 7: Get current cookies from Burp Cookie Jar
+        //  Get current cookies from Burp Cookie Jar
         app.get("/auth/cookies", ctx -> {
             try {
                 // Note: Burp Montoya API doesn't expose individual Cookie objects for retrieval
@@ -2574,7 +2574,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 7: Add/inject cookies into Burp Cookie Jar
+        //  Add/inject cookies into Burp Cookie Jar
         app.post("/auth/cookies", ctx -> {
             try {
                 Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
@@ -2696,7 +2696,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 7: Configure token injection headers
+        //  Configure token injection headers
         app.post("/auth/tokens", ctx -> {
             try {
                 Map<String, Object> requestData = ctx.bodyAsClass(Map.class);
@@ -2794,7 +2794,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 7: Get token configurations
+        //  Get token configurations
         app.get("/auth/tokens", ctx -> {
             try {
                 // Search for token configurations in database
@@ -2884,7 +2884,7 @@ public class RouteHandler {
             Map.of("method", "GET", "path", "/proxy/timeline", "description", "Get traffic timeline grouped by time intervals (interval=minute|hour|day; supports all search filters)"),
             Map.of("method", "GET", "path", "/proxy/har-export", "description", "Export proxy history as HAR file (supports all search filters; limit defaults to 1000)"),
             
-            // Phase 10: Enhanced Proxy Features
+            //  Enhanced Proxy Features
             Map.of("method", "POST", "path", "/proxy/tag", "description", "Tag traffic records with analyst labels (requires: request_id, tags)"),
             Map.of("method", "POST", "path", "/proxy/comment", "description", "Add comments to traffic records (requires: request_id, comment)"),
             Map.of("method", "GET", "path", "/proxy/tags", "description", "Get all tagged traffic records (optional: session_tag filter)"),
@@ -2897,7 +2897,7 @@ public class RouteHandler {
             Map.of("method", "GET", "path", "/proxy/query/list", "description", "List all saved queries with optional session filtering (optional: session_tag)"),
             Map.of("method", "DELETE", "path", "/proxy/query/{name}", "description", "Delete saved query by name (requires: name path parameter)"),
             
-            // Phase 11: Curl Generator
+            //  Curl Generator
             Map.of("method", "GET", "path", "/proxy/request/{id}/curl", "description", "Generate curl command for request (requires: id; optional: redact, pretty, shell, metadata)"),
             
             // Advanced Response Analysis (Montoya API 2025.8+)
@@ -2910,7 +2910,7 @@ public class RouteHandler {
             Map.of("method", "DELETE", "path", "/proxy/intercept/rules/{ruleId}", "description", "Delete specific proxy interception rule by ID"),
             Map.of("method", "PUT", "path", "/proxy/intercept/rules/{ruleId}/toggle", "description", "Enable or disable specific proxy interception rule (requires: enabled boolean)"),
             
-            // Phase 12: WebSocket Streaming
+            //  WebSocket Streaming
             Map.of("method", "WS", "path", "/ws/stream", "description", "Real-time WebSocket traffic streaming (query: session_tag; events: traffic.new, traffic.tagged, stats.updated, etc.)"),
             Map.of("method", "GET", "path", "/ws/stats", "description", "WebSocket connection statistics and performance metrics"),
             Map.of("method", "GET", "path", "/ws/test", "description", "Test WebSocket broadcasting functionality (optional: session_tag parameter)"),
@@ -3259,7 +3259,7 @@ public class RouteHandler {
             searchParams.put("session_tag", ctx.queryParam("session_tag"));
         }
         
-        // Phase 3 advanced filters
+        // advanced filters
         if (ctx.queryParam("case_insensitive") != null) searchParams.put("case_insensitive", ctx.queryParam("case_insensitive"));
         if (ctx.queryParam("start_time") != null) searchParams.put("start_time", ctx.queryParam("start_time"));
         if (ctx.queryParam("end_time") != null) searchParams.put("end_time", ctx.queryParam("end_time"));
@@ -3340,25 +3340,25 @@ public class RouteHandler {
      * Registers documentation routes for Phase 8.
      */
     private void registerDocumentationRoutes(Javalin app) {
-        // Phase 8: OpenAPI 3.0 specification endpoint
+        //  OpenAPI 3.0 specification endpoint
         app.get("/openapi", ctx -> {
             Map<String, Object> openApiSpec = generateOpenApiSpec();
             ctx.json(openApiSpec);
         });
         
-        // Phase 8: Swagger UI endpoint
+        //  Swagger UI endpoint
         app.get("/docs", ctx -> {
             String swaggerHtml = generateSwaggerUI();
             ctx.contentType("text/html").result(swaggerHtml);
         });
         
-        // Phase 8: Static assets for Swagger UI (if needed)
+        //  Static assets for Swagger UI (if needed)
         app.get("/docs/swagger-ui.css", ctx -> {
             ctx.contentType("text/css")
                .result("/* Basic Swagger UI styling */\\nbody { font-family: sans-serif; margin: 20px; }\\n.swagger-ui { max-width: 1200px; margin: 0 auto; }");
         });
         
-        // Phase 8: Postman collection export
+        //  Postman collection export
         app.get("/postman", ctx -> {
             Map<String, Object> postmanCollection = generatePostmanCollection();
             ctx.contentType("application/json")
@@ -3523,7 +3523,7 @@ public class RouteHandler {
             }
         });
         
-        // Phase 3 Task 13: Interactive Examples API
+        // Interactive Examples API
         app.get("/examples", ctx -> {
             Map<String, Object> examples = generateInteractiveExamples();
             ctx.json(examples);
@@ -4625,7 +4625,7 @@ public class RouteHandler {
      * Shutdown method
      */
     /**
-     * Registers enhanced collaborator routes (Phase 2 - Task 11).
+     * Registers enhanced collaborator routes (- Task 11).
      */
     private void registerEnhancedCollaboratorRoutes(Javalin app) {
         EnhancedCollaboratorRouteRegistrar enhancedCollaboratorRegistrar = new EnhancedCollaboratorRouteRegistrar(api, databaseService, config, collaboratorInteractionService);
@@ -4633,7 +4633,7 @@ public class RouteHandler {
     }
     
     /**
-     * Registers queue monitoring routes (Phase 2 - Task 10).
+     * Registers queue monitoring routes (- Task 10).
      */
     private void registerQueueMonitoringRoutes(Javalin app) {
         QueueMonitoringRouteRegistrar queueMonitoringRegistrar = new QueueMonitoringRouteRegistrar(enhancedTrafficQueue, queueMetricsCollectionService);
@@ -4641,7 +4641,7 @@ public class RouteHandler {
     }
     
     /**
-     * Registers webhook routes (Phase 3 - Task 13).
+     * Registers webhook routes (- Task 13).
      */
     private void registerWebhookRoutes(Javalin app) {
         WebhookRouteRegistrar webhookRegistrar = new WebhookRouteRegistrar(webhookService);

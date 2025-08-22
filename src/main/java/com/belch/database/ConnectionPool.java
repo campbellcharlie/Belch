@@ -85,7 +85,30 @@ public class ConnectionPool {
     }
     
     /**
-     * Get a connection from the pool
+     * Get READ-OPTIMIZED connection from the pool for queries.
+     */
+    public Connection getReadConnection() throws SQLException {
+        Connection conn = getConnection();
+        
+        // Apply read-only optimization if possible
+        try (java.sql.Statement stmt = conn.createStatement()) {
+            stmt.execute("PRAGMA query_only=ON");  // Read-only optimization
+        } catch (SQLException e) {
+            logger.debug("Could not set query_only mode: {}", e.getMessage());
+        }
+        
+        return conn;
+    }
+    
+    /**
+     * Get WRITE-OPTIMIZED connection from the pool for modifications.
+     */
+    public Connection getWriteConnection() throws SQLException {
+        return getConnection(); // Write connections use full settings
+    }
+    
+    /**
+     * Get a connection from the pool (internal method)
      */
     public Connection getConnection() throws SQLException {
         if (isShutdown.get()) {
@@ -170,11 +193,17 @@ public class ConnectionPool {
             // Configure connection for SQLite
             conn.setAutoCommit(true);
             
-            // SQLite-specific minimal settings for stability
+            // SQLite HIGH-PERFORMANCE settings for WAL mode
             try (java.sql.Statement stmt = conn.createStatement()) {
-                stmt.execute("PRAGMA synchronous=NORMAL");
-                stmt.execute("PRAGMA busy_timeout=10000");
-                stmt.execute("PRAGMA foreign_keys=ON");
+                stmt.execute("PRAGMA journal_mode=WAL");              // Enable WAL mode for concurrency
+                stmt.execute("PRAGMA cache_size=50000");              // 50MB cache for performance
+                stmt.execute("PRAGMA temp_store=memory");             // Use memory for temp operations
+                stmt.execute("PRAGMA mmap_size=268435456");           // 256MB memory mapping
+                stmt.execute("PRAGMA synchronous=NORMAL");            // Balanced durability/speed
+                stmt.execute("PRAGMA busy_timeout=30000");            // 30s timeout for high load
+                stmt.execute("PRAGMA foreign_keys=ON");               // Enforce constraints
+                stmt.execute("PRAGMA wal_autocheckpoint=1000");       // Auto-checkpoint management
+                stmt.execute("PRAGMA optimize");                      // Optimize indexes
             }
             
             return conn;

@@ -18,7 +18,7 @@ import java.util.concurrent.*;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Phase 3 Task 13: Webhook Support for Events
+ * Webhook Support for Events
  * 
  * Provides HTTP webhook notifications for API events including:
  * - Scanner scan completion

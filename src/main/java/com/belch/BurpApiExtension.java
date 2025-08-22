@@ -11,6 +11,7 @@ import com.belch.logging.ProxyLogger;
 import com.belch.logging.RepeaterLogger;
 import com.belch.logging.AllToolsLogger;
 import com.belch.startup.StartupOperations;
+import com.belch.services.DatabaseMaintenanceService;
 import io.javalin.Javalin;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -44,6 +45,7 @@ public class BurpApiExtension implements BurpExtension {
     private RepeaterLogger repeaterLogger;
     private AllToolsLogger allToolsLogger; // NEW: Comprehensive real-time capture
     private StartupOperations startupOperations; // NEW: Coordinated initialization
+    private DatabaseMaintenanceService maintenanceService; // Automated DB maintenance
     private ApiConfig config;
     private ConfigurationPanel configPanel;
     
@@ -70,20 +72,20 @@ public class BurpApiExtension implements BurpExtension {
         logger.info("Burp version: {}", api.burpSuite().version());
         
         try {
-            // Phase 1: Core Infrastructure
-            logger.info("🔧 Phase 1: Initializing core infrastructure...");
+            // Core Infrastructure
+            logger.info("Initializing core infrastructure...");
             initializeCoreInfrastructure();
             
-            // Phase 2: Dual-Strategy Traffic Capture
-            logger.info("🔧 Phase 2: Initializing dual-strategy traffic capture...");
+            // Dual-Strategy Traffic Capture
+            logger.info("Initializing dual-strategy traffic capture...");
             initializeDualStrategyCapture();
             
-            // Phase 3: API Server and UI
-            logger.info("🔧 Phase 3: Starting API server and UI...");
+            // API Server and UI
+            logger.info("Starting API server and UI...");
             initializeApiServerAndUI();
             
-            // Phase 4: Final Setup and Success Message
-            logger.info("🔧 Phase 4: Completing initialization...");
+            //  Final Setup and Success Message
+            logger.info("Completing initialization...");
             completeInitialization();
             
         } catch (Exception e) {
@@ -98,7 +100,7 @@ public class BurpApiExtension implements BurpExtension {
     }
     
     /**
-     * Phase 1: Initialize core infrastructure (config, database, queue).
+     * Initialize core infrastructure (config, database, queue).
      */
     private void initializeCoreInfrastructure() {
         // Initialize configuration
@@ -120,7 +122,7 @@ public class BurpApiExtension implements BurpExtension {
     }
     
     /**
-     * Phase 2: Initialize dual-strategy traffic capture system.
+     * Initialize dual-strategy traffic capture system.
      */
     private void initializeDualStrategyCapture() {
         // STRATEGY 1: Keep existing proven loggers + add comprehensive capture
@@ -145,24 +147,43 @@ public class BurpApiExtension implements BurpExtension {
         startupOperations = new StartupOperations(api, databaseService, config);
         logger.info("[+] StartupOperations initialized - ready for proxy history import");
         
-        // Re-enable automatic proxy history import on startup
-        logger.info("[*] Starting automatic proxy history import...");
-        try {
-            startupOperations.importExistingProxyHistoryOnly();
-            logger.info("[+] Automatic proxy history import completed successfully");
-        } catch (Exception e) {
-            logger.warn("Automatic proxy history import failed (continuing anyway): {}", e.getMessage());
-        }
+        // Queue proxy history import for background execution
+        logger.info("[*] Queueing automatic proxy history import for background execution...");
+        logger.info("[+] Import will start after extension initialization completes");
     }
     
     /**
-     * Phase 3: Initialize API server and user interface.
+     * Initialize API server and user interface.
      */
     private void initializeApiServerAndUI() {
-        // Initialize route handler with enhanced database capabilities
+        // Initialize route handler with enhanced database capabilities  
         logger.info("[*] Initializing enhanced route handler with WebSocket support...");
-        routeHandler = new RouteHandler(api, databaseService, trafficQueue, config);
-        logger.info("[+] Route handler initialized with traffic source analytics");
+        
+        // Diagnostic check - verify key dependencies are available
+        logger.info("[*] Checking RouteHandler dependencies...");
+        try {
+            Class.forName("com.belch.handlers.RouteHandler");
+            logger.info("[+] RouteHandler class found");
+            Class.forName("io.javalin.Javalin");
+            logger.info("[+] Javalin class found");
+            Class.forName("com.fasterxml.jackson.databind.ObjectMapper");
+            logger.info("[+] Jackson ObjectMapper class found");
+        } catch (ClassNotFoundException e) {
+            logger.error("Critical dependency missing: {}", e.getMessage());
+            throw new RuntimeException("Missing critical dependency", e);
+        }
+        
+        try {
+            routeHandler = new RouteHandler(api, databaseService, trafficQueue, config);
+            logger.info("[+] Route handler initialized with traffic source analytics");
+        } catch (NoClassDefFoundError e) {
+            logger.error("RouteHandler dependency missing: {}", e.getMessage());
+            logger.error("Missing class: {}", e.getMessage());
+            throw new RuntimeException("RouteHandler dependency error", e);
+        } catch (Exception e) {
+            logger.error("RouteHandler initialization failed: {}", e.getMessage(), e);
+            throw new RuntimeException("RouteHandler initialization failed", e);
+        }
         
         // Connect WebSocket broadcasting to TrafficQueue
         logger.info("[*] Connecting WebSocket broadcasting to traffic capture...");
@@ -182,7 +203,7 @@ public class BurpApiExtension implements BurpExtension {
     }
     
     /**
-     * Phase 4: Complete initialization and display success message.
+     *  Complete initialization and display success message.
      */
     private void completeInitialization() {
         // Get current database stats for success message
@@ -225,6 +246,33 @@ public class BurpApiExtension implements BurpExtension {
         // Log pending request count for debugging
         if (allToolsLogger != null) {
             logger.debug("AllToolsLogger pending requests: {}", allToolsLogger.getPendingRequestCount());
+        }
+        
+        // Start automated database maintenance service
+        logger.info("Starting automated database maintenance...");
+        try {
+            maintenanceService = new DatabaseMaintenanceService(databaseService);
+            maintenanceService.start();
+            logger.info("Database maintenance service started - automated ANALYZE/VACUUM/CHECKPOINT enabled");
+        } catch (Exception e) {
+            logger.error("Database maintenance service failed to start: {}", e.getMessage());
+            // Continue without maintenance - not critical for core functionality
+        }
+        
+        // Start proxy history import after all services are running
+        logger.info("Starting background proxy history import...");
+        if (startupOperations != null) {
+            // Run import in separate thread to avoid blocking
+            Thread.ofVirtual().name("ProxyHistoryImport").start(() -> {
+                try {
+                    Thread.sleep(2000); // Give services time to fully start
+                    logger.info("[*] Beginning automatic proxy history import...");
+                    startupOperations.importExistingProxyHistoryOnly();
+                    logger.info("Background proxy history import completed successfully");
+                } catch (Exception e) {
+                    logger.warn("Background proxy history import failed: {}", e.getMessage());
+                }
+            });
         }
     }
     
@@ -294,6 +342,12 @@ public class BurpApiExtension implements BurpExtension {
             if (javalinApp != null) {
                 logger.info("Shutting down API server...");
                 javalinApp.stop();
+            }
+            
+            // Shutdown database maintenance service
+            if (maintenanceService != null) {
+                logger.info("Shutting down Database Maintenance Service...");
+                maintenanceService.shutdown();
             }
             
             // Shutdown database service

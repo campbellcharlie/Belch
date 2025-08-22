@@ -32,7 +32,7 @@ public class SchemaManager {
     
     private static final Logger logger = LoggerFactory.getLogger(SchemaManager.class);
     
-    // Schema version - updated to 11 for Phase 10 enhancements
+    // Schema version - updated to 11 for enhancements
     private static final int CURRENT_SCHEMA_VERSION = 11;
     
     // Thread safety
@@ -72,7 +72,7 @@ public class SchemaManager {
         migrations.put(9, this::applyMigrationV9_MigrateDataAndIndexes);
         migrations.put(10, this::applyMigrationV10_CreateFTS5AndCleanup);
         
-        // Phase 10 enhancement migrations (11+)
+        // enhancement migrations (11+)
         migrations.put(11, this::applyMigrationV11_PhaseEnhancements);
     }
     
@@ -240,7 +240,7 @@ public class SchemaManager {
             case 8: return "Create traffic_responses table";
             case 9: return "Migrate data and create optimized indexes";
             case 10: return "Create FTS5 search and cleanup";
-            case 11: return "Phase 10 enhancements: metadata, tagging, saved queries, request FTS";
+            case 11: return "enhancements: metadata, tagging, saved queries, request FTS";
             default: return "Unknown migration";
         }
     }
@@ -456,10 +456,10 @@ public class SchemaManager {
     }
     
     /**
-     * Migration V11: Phase 10 enhancements - metadata, tagging, saved queries, request FTS
+     * Migration V11: enhancements - metadata, tagging, saved queries, request FTS
      */
     private void applyMigrationV11_PhaseEnhancements(Connection connection) throws SQLException {
-        logger.info("🔨 Applying Migration V11: Phase 10 API refinement and extensibility enhancements");
+        logger.info("🔨 Applying Migration V11: API refinement and extensibility enhancements");
         
         try (Statement stmt = connection.createStatement()) {
             // Add new columns to traffic_meta table
@@ -565,7 +565,7 @@ public class SchemaManager {
             stmt.execute("ANALYZE");
             stmt.execute("PRAGMA optimize");
             
-            logger.info("✅ Phase 10 enhancements migration completed successfully");
+            logger.info("✅ enhancements migration completed successfully");
         }
     }
     

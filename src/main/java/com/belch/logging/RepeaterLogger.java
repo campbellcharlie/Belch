@@ -32,7 +32,7 @@ public class RepeaterLogger implements HttpHandler {
     private final AtomicBoolean initialized = new AtomicBoolean(false);
     private final AtomicBoolean shutdown = new AtomicBoolean(false);
     
-    // PHASE 12 FIX: Add TrafficQueue for WebSocket broadcasting
+    // Add TrafficQueue for WebSocket broadcasting
     private com.belch.database.TrafficQueue trafficQueue;
     
     // Track pending Repeater requests to match with responses
@@ -53,7 +53,7 @@ public class RepeaterLogger implements HttpHandler {
     }
     
     /**
-     * PHASE 12 FIX: Set TrafficQueue for WebSocket broadcasting.
+     * Set TrafficQueue for WebSocket broadcasting.
      * 
      * @param trafficQueue The traffic queue for WebSocket events
      */
@@ -195,7 +195,7 @@ public class RepeaterLogger implements HttpHandler {
                 logger.debug("Stored Repeater traffic: {} {} -> {} (ID: {})", 
                            method, url, statusCode, recordId);
                 
-                // PHASE 12 FIX: Also queue for WebSocket broadcasting
+                // Also queue for WebSocket broadcasting
                 if (trafficQueue != null) {
                     trafficQueue.queueRawTraffic(method, url, host, 
                                                requestHeaders, requestBody,

@@ -8,7 +8,7 @@ import java.util.Map;
 import java.util.HashMap;
 
 /**
- * Represents a WebSocket event in Phase 12.
+ * Represents a WebSocket event
  * 
  * This class encapsulates all data sent through WebSocket connections,
  * providing a standardized format for real-time updates.

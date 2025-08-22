@@ -11,7 +11,7 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * Phase 3 Task 13: API Versioning Strategy
+ * API Versioning Strategy
  * 
  * Provides API versioning support with:
  * - URL-based versioning (/v1/, /v2/)

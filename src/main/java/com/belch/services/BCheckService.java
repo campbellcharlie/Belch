@@ -24,7 +24,7 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Phase 3 Task 14: Custom Scan Checks & BChecks Integration
+ * Custom Scan Checks & BChecks Integration
  * 
  * Provides BChecks management functionality including:
  * - Import and manage BCheck scripts

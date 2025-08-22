@@ -26,7 +26,7 @@ public class ProxyRouteRegistrar {
 
 
     public void registerRoutes(Javalin app) {
-        // Enhanced search proxy traffic with advanced filtering and regex support (Phase 3 Task 12)
+        // Enhanced search proxy traffic with advanced filtering and regex support 
         app.get("/proxy/search", ctx -> {
             if (!checkDatabaseAvailable(ctx)) return;
             Map<String, String> searchParams = extractSearchParams(ctx);
@@ -91,7 +91,7 @@ public class ProxyRouteRegistrar {
             searchParams.remove("limit");
             searchParams.remove("offset");
             
-            // Use regex search if regex parameters are provided (Phase 3 Task 12)
+            // Use regex search if regex parameters are provided 
             List<Map<String, Object>> results;
             boolean hasRegexParams = searchParams.containsKey("url_regex") || 
                                    searchParams.containsKey("method_regex") ||
@@ -127,7 +127,7 @@ public class ProxyRouteRegistrar {
                 ctx.contentType("application/xml")
                    .result(convertToXml(results, searchParams));
             } else if (format.equals("custom")) {
-                // Phase 3 Task 12: Custom export templates
+                // Custom export templates
                 String template = ctx.queryParam("template");
                 if (template == null || template.trim().isEmpty()) {
                     ctx.status(400).json(Map.of(
@@ -144,7 +144,7 @@ public class ProxyRouteRegistrar {
             }
         });
         
-        // Phase 3 Task 12: Bulk tagging/commenting endpoints
+        // Bulk tagging/commenting endpoints
         
         // Bulk add tags
         app.post("/proxy/bulk/tags", ctx -> {
@@ -392,7 +392,7 @@ public class ProxyRouteRegistrar {
         if (ctx.queryParam("limit") != null) searchParams.put("limit", ctx.queryParam("limit"));
         if (ctx.queryParam("offset") != null) searchParams.put("offset", ctx.queryParam("offset"));
         
-        // Phase 3 Task 12: Add regex support for all filter parameters
+        // Add regex support for all filter parameters
         if (ctx.queryParam("url_regex") != null) searchParams.put("url_regex", ctx.queryParam("url_regex"));
         if (ctx.queryParam("method_regex") != null) searchParams.put("method_regex", ctx.queryParam("method_regex"));
         if (ctx.queryParam("host_regex") != null) searchParams.put("host_regex", ctx.queryParam("host_regex"));
@@ -440,7 +440,7 @@ public class ProxyRouteRegistrar {
     }
     
     /**
-     * Convert results to XML format for Phase 3 Task 12.
+     * Convert results to XML format for Task 12.
      */
     private String convertToXml(List<Map<String, Object>> results, Map<String, String> searchParams) {
         StringBuilder xml = new StringBuilder();
@@ -534,7 +534,7 @@ public class ProxyRouteRegistrar {
     }
     
     /**
-     * Convert results using custom templates for Phase 3 Task 12.
+     * Convert results using custom templates for Task 12.
      */
     private String convertWithCustomTemplate(List<Map<String, Object>> results, Map<String, String> searchParams, String template) {
         switch (template.toLowerCase()) {

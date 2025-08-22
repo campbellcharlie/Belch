@@ -10,7 +10,7 @@ import java.util.HashMap;
 import java.util.Map;
 
 /**
- * Phase 3 Task 14: BChecks API Routes
+ * BChecks API Routes
  * 
  * Provides REST API endpoints for BChecks management:
  * - Import BCheck scripts

@@ -9,7 +9,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.atomic.AtomicLong;
 
 /**
- * Coordinates event broadcasting for Phase 12 WebSocket streaming.
+ * Coordinates event broadcasting for WebSocket streaming.
  * 
  * Integrates with existing systems to provide real-time event streaming:
  * - Traffic capture events
@@ -30,7 +30,7 @@ public class EventBroadcaster {
     
     public EventBroadcaster(WebSocketManager webSocketManager) {
         this.webSocketManager = webSocketManager;
-        logger.info("[*] Phase 12 Event Broadcaster initialized");
+        logger.info("[*] Event Broadcaster initialized");
     }
     
     /**
@@ -38,7 +38,7 @@ public class EventBroadcaster {
      */
     public void broadcastTrafficCapture(Map<String, Object> trafficData, String sessionTag) {
         try {
-            // Phase 12: Broadcast to all connected clients regardless of session tag
+            //  Broadcast to all connected clients regardless of session tag
             Map<String, Object> eventData = new HashMap<>();
             eventData.put("id", trafficData.get("id"));
             eventData.put("method", trafficData.get("method"));
@@ -64,7 +64,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast traffic tagging event (Phase 10 integration).
+     * Broadcast traffic tagging event (integration).
      */
     public void broadcastTrafficTagged(long requestId, String tags, String sessionTag) {
         try {
@@ -82,7 +82,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast traffic comment event (Phase 10 integration).
+     * Broadcast traffic comment event (integration).
      */
     public void broadcastTrafficCommented(long requestId, String comment, String sessionTag) {
         try {
@@ -100,7 +100,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast replay started event (Phase 10 integration).
+     * Broadcast replay started event (integration).
      */
     public void broadcastReplayStarted(java.util.List<Long> requestIds, String sessionTag) {
         try {
@@ -242,7 +242,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast search query saved event (Phase 10 integration).
+     * Broadcast search query saved event (integration).
      */
     public void broadcastQuerySaved(String queryName, Map<String, Object> queryParams, String sessionTag) {
         try {
@@ -315,7 +315,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast collaborator interaction event (Phase 2 Task 11).
+     * Broadcast collaborator interaction event .
      */
     public void broadcastCollaboratorInteraction(Map<String, Object> interactionData, String sessionTag) {
         try {
@@ -335,7 +335,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast collaborator alert event (Phase 2 Task 11).
+     * Broadcast collaborator alert event .
      */
     public void broadcastAlert(Map<String, Object> alertData, String sessionTag) {
         try {
@@ -356,7 +356,7 @@ public class EventBroadcaster {
     }
     
     /**
-     * Broadcast queue metrics event (Phase 2 Task 10).
+     * Broadcast queue metrics event .
      */
     public void broadcastQueueMetrics(Map<String, Object> metricsData, String sessionTag) {
         try {

@@ -10,7 +10,7 @@ import java.time.format.DateTimeFormatter;
 import java.util.*;
 
 /**
- * Phase 3 Task 13: Interactive Documentation Service
+ * Interactive Documentation Service
  * 
  * Provides dynamic API documentation with interactive examples,
  * code generation, and real-time testing capabilities.
@@ -237,7 +237,7 @@ public class DocumentationService {
     }
     
     private void initializeEndpointDocumentation() {
-        // Phase 3 Task 13: Add comprehensive endpoint documentation
+        // Add comprehensive endpoint documentation
         
         // Proxy Traffic Management
         Map<String, Object> searchParams = new HashMap<>();

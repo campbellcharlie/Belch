@@ -1,9 +1,9 @@
 package com.belch.websocket;
 
 /**
- * Defines the types of events that can be streamed via WebSocket in Phase 12.
+ * Defines the types of events that can be streamed via WebSocket
  * 
- * Phase 12: Real-time WebSocket Traffic Streaming
+ *  Real-time WebSocket Traffic Streaming
  * - Live traffic monitoring
  * - Real-time statistics updates
  * - Event-driven notifications
@@ -47,11 +47,11 @@ public enum WebSocketEventType {
     REPLAY_STARTED("replay.started", "Request replay initiated"),
     REPLAY_COMPLETED("replay.completed", "Request replay completed"),
     
-    // Collaborator Events (Phase 2 Task 11)
+    // Collaborator Events 
     COLLABORATOR_INTERACTION("collaborator.interaction", "Collaborator interaction detected"),
     COLLABORATOR_ALERT("collaborator.alert", "Collaborator security alert triggered"),
     
-    // Enhanced Queue Events (Phase 2 Task 10)
+    // Enhanced Queue Events 
     QUEUE_METRICS("queue.metrics", "Enhanced traffic queue metrics update"),
     
     // Generic Events

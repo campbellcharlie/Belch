@@ -83,7 +83,14 @@ public class StartupOperations {
      * Use this when services are already initialized elsewhere.
      */
     public void importExistingProxyHistoryOnly() {
+        long startTime = System.currentTimeMillis();
+        logger.info("🚀 Starting optimized proxy history import...");
+        
         importExistingProxyHistory();
+        
+        long endTime = System.currentTimeMillis();
+        long duration = endTime - startTime;
+        logger.info("⚡ Proxy history import completed in {}ms ({}s)", duration, duration / 1000.0);
     }
     
     /**
