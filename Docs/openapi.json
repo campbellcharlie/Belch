@@ -706,7 +706,7 @@
       }
     },
     "/proxy/tag": {
-      "put": {
+      "post": {
         "summary": "Tag traffic records with analyst labels (requires: request_id, tags)",
         "description": "Tag traffic records with analyst labels (requires: request_id, tags)",
         "responses": {
@@ -756,6 +756,33 @@
         },
         "tags": [
           "Webhooks"
+        ]
+      }
+    },
+    "/proxy/comments": {
+      "get": {
+        "summary": "Get all commented traffic records (optional: session_tag filter)",
+        "description": "Get all commented traffic records (optional: session_tag filter)",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "tags": [
+          "Proxy"
         ]
       }
     },
@@ -1139,8 +1166,8 @@
     },
     "/proxy/search": {
       "get": {
-        "summary": "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version.",
-        "description": "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version.",
+        "summary": "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, tags, has_tags, has_comments, comment, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version.",
+        "description": "Search proxy traffic with advanced filters (url, method, host, hosts[], status_code, session_tag, tags, has_tags, has_comments, comment, case_insensitive, start_time, end_time, since, limit, offset). Response includes request_http_version and response_http_version.",
         "responses": {
           "200": {
             "content": {
@@ -2265,6 +2292,33 @@
         ]
       }
     },
+    "/proxy/tags": {
+      "get": {
+        "summary": "Get all tagged traffic records (optional: session_tag filter)",
+        "description": "Get all tagged traffic records (optional: session_tag filter)",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "tags": [
+          "Proxy"
+        ]
+      }
+    },
     "/collaborator/interactions/enhanced": {
       "get": {
         "summary": "Get enhanced interactions with pattern matching and analytics (requires: client_secret)",
@@ -2508,6 +2562,33 @@
         ]
       }
     },
+    "/proxy/search/metadata": {
+      "get": {
+        "summary": "Search tagged and commented records with metadata filters (tags, has_tags, has_comments, comment, session_tag, limit)",
+        "description": "Search tagged and commented records with metadata filters (tags, has_tags, has_comments, comment, session_tag, limit)",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object"
+                }
+              }
+            },
+            "description": "Successful response"
+          },
+          "400": {
+            "description": "Bad request"
+          },
+          "500": {
+            "description": "Internal server error"
+          }
+        },
+        "tags": [
+          "Proxy"
+        ]
+      }
+    },
     "/collaborator/status": {
       "get": {
         "summary": "Check Collaborator connectivity and server status",
@@ -2617,7 +2698,7 @@
       }
     },
     "/proxy/comment": {
-      "put": {
+      "post": {
         "summary": "Add comments to traffic records (requires: request_id, comment)",
         "description": "Add comments to traffic records (requires: request_id, comment)",
         "responses": {
@@ -2651,7 +2732,7 @@
     },
     "description": "REST API extension for Burp Suite Professional that enables programmatic access to proxy traffic, scanner functionality, scope management, and collaborative testing workflows. Features advanced response analysis, real-time proxy interception, and enhanced security testing capabilities using Montoya API 2025.8+.",
     "title": "Belch - Burp Suite REST API Extension",
-    "version": "1.0.0"
+    "version": "1.0.1"
   },
   "tags": [
     {
