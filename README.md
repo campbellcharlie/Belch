@@ -21,8 +21,7 @@ REST API extension for Burp Suite Professional providing programmatic access to 
 ## Features
 
 **API Coverage**
-- Proxy traffic management: search, filter, export HTTP requests/responses with HTTP version tracking
-- Advanced filtering: batch host filtering, incremental updates with timestamp-based queries
+- Proxy traffic management: search, filter, export HTTP requests/responses  
 - Scanner operations: trigger scans, retrieve vulnerability findings
 - Scope configuration: programmatic include/exclude URL management
 - Burp Collaborator integration for out-of-band testing
@@ -123,7 +122,7 @@ ws.onmessage = (event) => {
 
 ## Implementation Examples
 
-### Automated Security Testing
+### Scripted Security Testing
 ```python
 import requests
 import sys

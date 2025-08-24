@@ -134,3 +134,6 @@ node_modules/
 
 # Local development files (not for public release)
 not_uploaded/
+
+# Claude AI project instructions
+CLAUDE.md

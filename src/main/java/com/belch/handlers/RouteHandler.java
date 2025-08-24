@@ -2924,7 +2924,7 @@ public class RouteHandler {
                 response.put("session_tag", sessionTag);
                 response.put("timestamp", System.currentTimeMillis());
                 response.put("message", "Token configuration stored. Use this token data in request replay and scanning operations.");
-                response.put("usage_note", "The token configuration is stored in the database and can be referenced by session_tag for automated injection in future requests.");
+                response.put("usage_note", "The token configuration is stored in the database and can be referenced by session_tag for programmatic use in future requests.");
                 
                 ctx.json(response);
                 
